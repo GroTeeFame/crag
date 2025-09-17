@@ -1,0 +1,842 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="mb-4 border-b border-slate-200">
+  <nav class="-mb-px flex items-center justify-between" id="tabs">
+    <div class="flex gap-6">
+      <button data-tab="chat" class="py-2 border-b-2 border-sky-600 text-sky-700 font-medium">Чат</button>
+      <button data-tab="doc"  class="py-2 border-b-2 border-transparent text-slate-500 hover:text-slate-700">Обробка постанови НБУ</button>
+      <button data-tab="results" class="py-2 border-b-2 border-transparent text-slate-500 hover:text-slate-700">Результати</button>
+      {% if logged_in %}
+      <button data-tab="corpus" class="py-2 border-b-2 border-transparent text-slate-500 hover:text-slate-700">Документи</button>
+      {% endif %}
+    </div>
+    <div class="text-sm">
+      {% if logged_in %}
+        <a href="{{ url_for('logout') }}" class="text-slate-600 hover:text-slate-800">Вийти</a>
+      {% else %}
+        <a href="{{ url_for('login') }}" class="text-slate-600 hover:text-slate-800">Увійти</a>
+      {% endif %}
+    </div>
+  </nav>
+</div>
+
+<!-- Chat tab -->
+<section id="tab-chat" class="flex-1 min-h-0 flex flex-col">
+  <div class="flex-1 min-h-0 bg-white rounded-lg shadow p-4 flex flex-col">
+    <div id="chat-log" class="flex-1 overflow-y-auto space-y-3 mb-4 pr-2 min-h-0">
+      <!-- messages -->
+    </div>
+    <form id="chat-form" class="flex gap-2">
+      <input id="chat-input" class="flex-1 border border-slate-300 rounded px-3 py-2" placeholder="Введіть запитання..." />
+      <button class="bg-sky-600 text-white px-4 py-2 rounded hover:bg-sky-700">
+        <img src="{{ url_for('static', filename='images/icons/send.png') }}" alt="Send" class="w-5 h-5">
+      </button>
+    </form>
+  </div>
+</section>
+
+<!-- Doc tab -->
+<section id="tab-doc" class="hidden">
+  <div class="bg-white rounded-lg shadow p-4 space-y-4">
+    <form id="upload-form" class="space-y-3">
+      <input id="file-input" type="file" accept=".docx" class="hidden" />
+
+      <div id="dropzone" class="flex flex-col items-center justify-center w-full border-2 border-dashed border-slate-300 rounded-lg px-4 py-10 text-center cursor-pointer hover:border-slate-400 transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-8 h-8 text-slate-400 mb-2">
+          <path fill-rule="evenodd" d="M3 3a2 2 0 012-2h10a2 2 0 012 2v7.586a2 2 0 01-.586 1.414l-4.414 4.414A2 2 0 0110.586 17H5a2 2 0 01-2-2V3zm8 0H9v6H6l4 4 4-4h-3V3z" clip-rule="evenodd" />
+        </svg>
+        <p class="text-sm text-slate-600"><span class="dz-label">Перетягніть .docx сюди або натисніть, щоб обрати</span></p>
+        <p class="text-xs text-slate-400 mt-1">Підтримується лише один файл .docx</p>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <button id="upload-start" class="bg-sky-600 text-white px-4 py-2 rounded hover:bg-sky-700" type="submit">Розпочати</button>
+        <button id="pick-file" type="button" class="border border-slate-300 text-slate-700 px-4 py-2 rounded hover:bg-slate-50">Оберіть .docx</button>
+        <span id="chosen-file" class="text-sm text-slate-500"></span>
+      </div>
+    </form>
+
+    <div id="uploading-banner" class="hidden rounded border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2 text-sm">
+      <span id="uploading-text">Завантаження та запуск обробки…</span>
+    </div>
+
+    <div id="progress" class="hidden">
+      <div class="flex items-center justify-between">
+        <div>
+          <div id="file-name" class="text-sm text-slate-500"></div>
+          <div class="text-sm" id="status-line"></div>
+        </div>
+        <a id="download-link" class="hidden bg-emerald-600 text-white px-3 py-2 rounded hover:bg-emerald-700" href="#">Завантажити DOCX</a>
+      </div>
+      <div class="mt-3 w-full bg-slate-200 rounded h-3">
+        <div id="bar" class="bg-sky-600 h-3 rounded" style="width:0%"></div>
+      </div>
+      <div id="last-brief" class="text-xs text-slate-500 mt-2"></div>
+    </div>
+
+    <p class="text-xs text-slate-500">Обробка документу може зайняти тривалий проміжок часу. Прогрес оновлюється в реальному часі.</p>
+  </div>
+</section>
+
+<!-- Results tab -->
+<section id="tab-results" class="hidden">
+  <div class="bg-white rounded-lg shadow p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="font-medium">Опрацьовані файли</h3>
+      <div class="flex items-center gap-3">
+        <label class="text-sm text-slate-600 flex items-center gap-2">
+          Елементів на сторінку
+          <select id="results-page-size" class="border border-slate-300 rounded px-2 py-1 text-sm">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+          </select>
+        </label>
+        <div class="flex items-center gap-2">
+          <button id="results-prev" class="border border-slate-300 text-slate-700 px-2 py-1 rounded hover:bg-slate-50">Попередня</button>
+          <span id="results-page-info" class="text-sm text-slate-600">Page 1/1</span>
+          <button id="results-next" class="border border-slate-300 text-slate-700 px-2 py-1 rounded hover:bg-slate-50">Наступна</button>
+        </div>
+        <button id="refresh-results" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50">Оновити</button>
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="text-slate-500">
+          <tr>
+            <th class="text-left font-medium py-2 pr-4">Файл</th>
+            <th class="text-left font-medium py-2 pr-4">Розмір</th>
+            <th class="text-left font-medium py-2 pr-4">Дата</th>
+            <th class="text-left font-medium py-2 pr-4">Дія</th>
+          </tr>
+        </thead>
+        <tbody id="results-tbody" class="align-top"></tbody>
+      </table>
+    </div>
+    <p class="text-xs text-slate-500 mt-3"></p>
+  </div>
+</section>
+
+<!-- Corpus tab -->
+<section id="tab-corpus" class="hidden">
+  <div class="bg-white rounded-lg shadow p-4 space-y-4">
+    {% if not logged_in %}
+      <div class="text-slate-600">Потрібен вхід, щоб керувати документами. <a class="text-sky-600 hover:underline" href="{{ url_for('login') }}">Увійти</a></div>
+    {% else %}
+    <div class="flex items-center gap-3 flex-wrap">
+      <form id="corpus-upload-form" class="flex items-center gap-2">
+        <input id="corpus-rel-dir" type="hidden" />
+        <span class="text-sm text-slate-600">Папка призначення: <span id="corpus-selected" class="font-medium">/</span></span>
+        <input id="corpus-file" type="file" accept=".docx" class="hidden" />
+        <button id="corpus-pick" type="button" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50">Оберіть .docx</button>
+        <span id="corpus-chosen" class="text-sm text-slate-500"></span>
+        <button class="bg-sky-600 text-white px-3 py-1.5 rounded hover:bg-sky-700" type="submit">Завантажити сюди</button>
+      </form>
+      <div class="flex items-center gap-2">
+        <button id="select-root" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50" title="Вибрати кореневу папку">Вибрати /</button>
+        <input id="mkdir-name" type="text" placeholder="Нова папка" class="border border-slate-300 rounded px-2 py-1 text-sm" />
+        <button id="mkdir-btn" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50">Створити</button>
+        <button id="rmdir-btn" class="border border-red-300 text-red-700 px-3 py-1.5 rounded hover:bg-red-50">Видалити папку</button>
+        <button id="collapse-all" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50">Згорнути все</button>
+      </div>
+      <div class="flex items-center gap-2">
+        <label class="text-sm text-slate-600 flex items-center gap-2">
+          Показ джерела:
+          <select id="source-label-mode" class="border border-slate-300 rounded px-2 py-1 text-sm">
+            <option value="filename">Назва файлу</option>
+            <option value="docx_relpath">Шлях (docx_relpath)</option>
+          </select>
+        </label>
+        <button id="sync-vs" class="border border-emerald-300 text-emerald-700 px-3 py-1.5 rounded hover:bg-emerald-50">Синхронізувати</button>
+        <button id="corpus-refresh" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50">Оновити</button>
+      </div>
+    </div>
+
+    <div id="corpus-tree" class="text-sm"></div>
+    {% endif %}
+  </div>
+</section>
+
+
+<script>
+  // Tabs
+  const tabs = document.querySelectorAll('#tabs button');
+  const viewChat = document.getElementById('tab-chat');
+  const viewDoc  = document.getElementById('tab-doc');
+  const viewCorpus  = document.getElementById('tab-corpus');
+  tabs.forEach(b => b.addEventListener('click', () => {
+    tabs.forEach(x => { x.classList.remove('border-sky-600','text-sky-700'); x.classList.add('border-transparent','text-slate-500'); });
+    b.classList.add('border-sky-600','text-sky-700'); b.classList.remove('text-slate-500');
+    const tab = b.dataset.tab;
+    viewChat.classList.add('hidden');
+    viewDoc.classList.add('hidden');
+    document.getElementById('tab-results').classList.add('hidden');
+    viewCorpus.classList.add('hidden');
+    if (tab === 'chat') document.getElementById('tab-chat').classList.remove('hidden');
+    else if (tab === 'doc') document.getElementById('tab-doc').classList.remove('hidden');
+    else if (tab === 'results') {
+      document.getElementById('tab-results').classList.remove('hidden');
+      loadResults(); // auto load when switching to results
+    } else if (tab === 'corpus') {
+      viewCorpus.classList.remove('hidden');
+      loadCorpus();
+    }
+  }));
+
+  // Chat
+  const chatForm = document.getElementById('chat-form');
+  const chatInput = document.getElementById('chat-input');
+  const chatLog = document.getElementById('chat-log');
+
+  function addMsg(who, text) {
+    const wrap = document.createElement('div');
+    wrap.className = who === 'you' ? 'flex justify-end' : 'flex justify-start';
+    const b = document.createElement('div');
+    b.className = who === 'you'
+      ? 'bg-sky-600 text-white rounded px-3 py-2 max-w-[80%] whitespace-pre-wrap break-words'
+      : 'bg-slate-100 text-slate-900 rounded px-3 py-2 max-w-[80%] whitespace-pre-wrap break-words';
+    b.textContent = text;
+    wrap.appendChild(b);
+    chatLog.appendChild(wrap);
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+  function addMsg_t(who, text, sources=null) {
+    const wrap = document.createElement('div');
+    wrap.className = who === 'you' ? 'flex justify-end' : 'flex justify-start';
+    const b = document.createElement('div');
+    b.className = who === 'you'
+      ? 'bg-sky-600 text-white rounded px-3 py-2 max-w-[80%] whitespace-pre-wrap break-words'
+      : 'bg-slate-100 text-slate-900 rounded px-3 py-2 max-w-[80%] whitespace-pre-wrap break-words';
+    b.textContent = text;
+    wrap.appendChild(b);
+    chatLog.appendChild(wrap);
+    chatLog.scrollTop = chatLog.scrollHeight;
+
+    console.log("sources : " + sources)
+
+    if (sources && Array.isArray(sources) && sources.length > 0){
+      console.log("    if (sources && Array.isArray(sources) && sources.length > 0){} - TRUE")
+      const wrap_s = document.createElement('div');
+      wrap_s.className = 'flex justify-start ';
+      const s = document.createElement('div');
+      // s.className = 'bg-slate-100 text-slate-500 text-xs rounded px-3 py-2 max-w-[80%]';
+      s.className = 'text-slate-500 text-xs rounded px-2 py-1 max-w-[80%] whitespace-pre-wrap break-words';
+      s.textContent = "Джерела: \n";
+      s.textContent += sources.join("; ");
+      wrap_s.appendChild(s)
+      chatLog.appendChild(wrap_s)
+      chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+  }
+
+  chatForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = chatInput.value.trim();
+    if (!msg) return;
+    addMsg('you', msg);
+    chatInput.value = '';
+    addMsg('bot', '…');
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({message: msg})
+      });
+      const data = await res.json();
+      chatLog.lastChild.remove(); // remove placeholder
+      addMsg_t('bot', data.answer, data.sources || '[no answer]');
+      // addMsg('bot', data.sources || '[no answer]');
+      // addMsg('bot', data.answer || '[no answer]');
+    } catch (err) {
+      chatLog.lastChild.remove();
+      addMsg('bot', 'Помилка запиту');
+    }
+  });
+
+  // Upload + progress (SSE)
+const uploadForm = document.getElementById('upload-form');
+const fileInput = document.getElementById('file-input');
+const startBtn = document.getElementById('upload-start');
+const progressBox = document.getElementById('progress');
+const fileNameEl = document.getElementById('file-name');
+const statusLine = document.getElementById('status-line');
+const bar = document.getElementById('bar');
+const dl = document.getElementById('download-link');
+const lastBrief = document.getElementById('last-brief');
+const uploadingBanner = document.getElementById('uploading-banner');
+const uploadingText = document.getElementById('uploading-text');
+
+  // ---- Persist in-flight task across reloads ----
+  const LS_KEY_TASK = 'crag_last_task';
+  const LS_KEY_FILE = 'crag_last_file';
+
+  function saveLastTask(taskId, fileName) {
+    try {
+      localStorage.setItem(LS_KEY_TASK, taskId);
+      if (fileName) localStorage.setItem(LS_KEY_FILE, fileName);
+    } catch (_) {}
+  }
+  function clearLastTask(taskId) {
+    try {
+      const cur = localStorage.getItem(LS_KEY_TASK);
+      if (!taskId || cur === taskId) {
+        localStorage.removeItem(LS_KEY_TASK);
+        localStorage.removeItem(LS_KEY_FILE);
+      }
+    } catch (_) {}
+  }
+  function getLastTask() {
+    try {
+      const id = localStorage.getItem(LS_KEY_TASK);
+      const fn = localStorage.getItem(LS_KEY_FILE) || '';
+      return id ? { id, fileName: fn } : null;
+    } catch (_) { return null; }
+  }
+
+function attachProgressSSE(taskId, fileNameFallback, onOpenCb) {
+  progressBox.classList.remove('hidden');
+  fileNameEl.textContent = fileNameFallback ? ('Файл: ' + fileNameFallback) : '';
+  dl.classList.add('hidden');
+  lastBrief.textContent = '';
+  bar.style.width = '0%';
+  statusLine.textContent = 'Відновлюю прогрес…';
+
+  const ev = new EventSource('/api/progress/' + taskId);
+  let opened = false;
+  ev.onopen = () => {
+    opened = true;
+    if (uploadingText) uploadingText.textContent = 'Підключено. Очікування оновлень…';
+    try { if (typeof onOpenCb === 'function') onOpenCb(); } catch (_) {}
+  };
+  ev.onmessage = (m) => {
+    if (!opened) { opened = true; try { if (typeof onOpenCb === 'function') onOpenCb(); } catch (_) {} }
+    const data = JSON.parse(m.data);
+      if (!data) return;
+
+      if (data.filename_in) {
+        fileNameEl.textContent = 'Файл: ' + data.filename_in;
+        saveLastTask(taskId, data.filename_in);
+      }
+
+      const total = data.total || 0;
+      const done = data.done || 0;
+      const pct = total ? Math.floor((done / total) * 100) : 0;
+      bar.style.width = pct + '%';
+      statusLine.textContent = total ? `Опрацьовано: ${done} з ${total} (${pct}%)` : 'Підготовка…';
+
+      if (data.last_brief) {
+        lastBrief.textContent = `Останній результат: ${data.last_brief}`;
+      }
+
+      if (data.status === 'done') {
+        ev.close();
+        dl.href = '/api/download/' + data.task_id;
+        dl.classList.remove('hidden');
+        statusLine.textContent = 'Готово. Можете завантажити результат.';
+        // Clear the last short message once finished
+        lastBrief.textContent = '';
+        clearLastTask(taskId);
+      } else if (data.status === 'error') {
+        ev.close();
+        statusLine.textContent = 'Помилка обробки';
+        lastBrief.textContent = '';
+        clearLastTask(taskId);
+      }
+    };
+    ev.onerror = () => {
+      // EventSource auto-reconnects; show a transient reconnecting state
+      if (uploadingText) uploadingText.textContent = 'Втрачено зв\'язок. Відновлюю…';
+      statusLine.textContent = 'Втрачено зв\'язок. Відновлюю…';
+    };
+  }
+
+  // Reattach on reload if a task is in-flight
+  window.addEventListener('load', () => {
+    const last = getLastTask();
+    if (last && last.id) {
+      attachProgressSSE(last.id, last.fileName || '');
+    }
+  });
+
+  // --- Dropzone wiring ---
+  const dropzone = document.getElementById('dropzone');
+  const pickBtn = document.getElementById('pick-file');
+  const chosenFile = document.getElementById('chosen-file');
+  const dzLabel = dropzone.querySelector('.dz-label');
+
+  function clearDZVisual() {
+    dropzone.classList.remove('ring-2','ring-sky-400','bg-sky-50');
+    dropzone.classList.remove('ring-red-400');
+  }
+  function setChosen(file) {
+    chosenFile.textContent = file ? file.name : '';
+    if (file) dzLabel.textContent = `Обрано файл: ${file.name}`; else dzLabel.textContent = 'Перетягніть .docx сюди або натисніть, щоб обрати';
+  }
+
+  // Click to open picker
+  dropzone.addEventListener('click', () => fileInput.click());
+  pickBtn.addEventListener('click', () => fileInput.click());
+
+  // Reflect manual selection
+  fileInput.addEventListener('change', () => {
+    const f = fileInput.files && fileInput.files[0];
+    setChosen(f || null);
+  });
+
+  // Drag & drop handlers
+  ['dragenter','dragover'].forEach(evt => dropzone.addEventListener(evt, (e) => {
+    e.preventDefault(); e.stopPropagation();
+    dropzone.classList.add('ring-2','ring-sky-400','bg-sky-50');
+  }));
+  ;['dragleave','dragend'].forEach(evt => dropzone.addEventListener(evt, (e) => {
+    e.preventDefault(); e.stopPropagation();
+    clearDZVisual();
+  }));
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    clearDZVisual();
+    const files = e.dataTransfer?.files;
+    if (!files || !files.length) return;
+    const f = files[0];
+    if (!f.name.toLowerCase().endsWith('.docx')) {
+      dropzone.classList.add('ring-2','ring-red-400');
+      dzLabel.textContent = 'Потрібен файл .docx';
+      setTimeout(() => { clearDZVisual(); dzLabel.textContent = 'Перетягніть .docx сюди або натисніть, щоб обрати'; }, 1600);
+      return;
+    }
+    // Set the File on the hidden input so existing submit logic works
+    const dt = new DataTransfer();
+    dt.items.add(f);
+    fileInput.files = dt.files;
+    setChosen(f);
+    // Do NOT auto-start; require explicit click on the Start button
+  });
+
+let isSubmitting = false;
+uploadForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (isSubmitting) return;
+  if (!fileInput.files.length) return;
+  isSubmitting = true;
+  startBtn?.setAttribute('disabled', 'disabled');
+  if (uploadingText) uploadingText.textContent = 'Завантаження файлу…';
+  uploadingBanner?.classList.remove('hidden');
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+
+  let j = null;
+  try {
+    const r = await fetch('/api/upload', { method: 'POST', body: fd });
+    j = await r.json();
+  } catch (err) {
+    alert('Upload failed');
+    isSubmitting = false;
+    startBtn?.removeAttribute('disabled');
+    uploadingBanner?.classList.add('hidden');
+    return;
+  }
+  if (!j || !j.task_id) { alert('Upload failed'); isSubmitting = false; startBtn?.removeAttribute('disabled'); uploadingBanner?.classList.add('hidden'); return; }
+
+    // persist & (re)attach to progress stream
+    saveLastTask(j.task_id, fileInput.files[0].name);
+  if (uploadingText) uploadingText.textContent = 'Підключення до прогресу…';
+  attachProgressSSE(j.task_id, fileInput.files[0].name, () => {
+    uploadingBanner?.classList.add('hidden');
+    startBtn?.removeAttribute('disabled');
+    isSubmitting = false;
+  });
+  return; // prevent any duplicate SSE setup below
+});
+
+  // ----- Results tab logic -----
+  const resultsTBody = document.getElementById('results-tbody');
+  const refreshBtn = document.getElementById('refresh-results');
+  const pageSizeSel = document.getElementById('results-page-size');
+  const pageInfo = document.getElementById('results-page-info');
+  const btnPrev = document.getElementById('results-prev');
+  const btnNext = document.getElementById('results-next');
+
+  let resultsPage = 1;
+  let resultsTotalPages = 1;
+  
+  function fmtSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    const kb = bytes / 1024;
+    if (kb < 1024) return kb.toFixed(1) + ' KB';
+    const mb = kb / 1024;
+    return mb.toFixed(2) + ' MB';
+  }
+  function fmtDate(ts) {
+    try {
+      const d = new Date(ts * 1000);
+      return d.toLocaleString("en-GB");
+    } catch { return ''; }
+  }
+  async function loadResults() {
+    try {
+      const ps = parseInt(pageSizeSel.value || '50', 10);
+      const res = await fetch(`/api/results?page=${resultsPage}&page_size=${ps}`);
+      const j = await res.json();
+      const rows = (j.results || []);
+      resultsTBody.innerHTML = '';
+      if (!rows.length) {
+        resultsTBody.innerHTML = '<tr><td class="py-2 text-slate-500" colspan="4">No files yet.</td></tr>';
+        resultsTotalPages = 1;
+        pageInfo.textContent = `Page ${resultsPage}/1`;
+        btnPrev.disabled = resultsPage <= 1;
+        btnNext.disabled = resultsPage >= resultsTotalPages;
+        return;
+      }
+      // Update pagination UI
+      resultsTotalPages = j.total_pages || 1;
+      pageInfo.textContent = `Page ${j.page || resultsPage}/${resultsTotalPages}`;
+      btnPrev.disabled = (j.page || resultsPage) <= 1;
+      btnNext.disabled = (j.page || resultsPage) >= resultsTotalPages;
+      for (const r of rows) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="py-2 pr-4">${r.name}</td>
+          <td class="py-2 pr-4">${fmtSize(r.size)}</td>
+          <td class="py-2 pr-4">${fmtDate(r.mtime)}</td>
+          <td class="py-2 pr-4">
+            <a href="${r.href}" class="bg-emerald-600 text-white px-3 py-1.5 rounded hover:bg-emerald-700">Download</a>
+          </td>
+        `;
+        resultsTBody.appendChild(tr);
+      }
+    } catch (e) {
+      resultsTBody.innerHTML = '<tr><td class="py-2 text-red-600" colspan="4">Failed to load results</td></tr>';
+    }
+  }
+  refreshBtn?.addEventListener('click', () => loadResults());
+  pageSizeSel?.addEventListener('change', () => { resultsPage = 1; loadResults(); });
+  btnPrev?.addEventListener('click', () => { if (resultsPage > 1) { resultsPage -= 1; loadResults(); }});
+  btnNext?.addEventListener('click', () => { if (resultsPage < resultsTotalPages) { resultsPage += 1; loadResults(); }});
+
+  // Initial load
+  loadResults();
+  // Optionally, auto-refresh every 30s while the tab is visible:
+  let resultsTimer = null;
+  document.addEventListener('visibilitychange', () => {
+    const visible = !document.hidden && !document.getElementById('tab-results').classList.contains('hidden');
+    if (visible && !resultsTimer) {
+      resultsTimer = setInterval(loadResults, 30000);
+    } else if (!visible && resultsTimer) {
+      clearInterval(resultsTimer); resultsTimer = null;
+    }
+  });
+
+  // ----- Corpus tab logic -----
+  const corpusTree = document.getElementById('corpus-tree');
+  const corpusRefresh = document.getElementById('corpus-refresh');
+  const corpusPick = document.getElementById('corpus-pick');
+  const corpusFile = document.getElementById('corpus-file');
+  const corpusRelDir = document.getElementById('corpus-rel-dir');
+  const corpusChosen = document.getElementById('corpus-chosen');
+  const corpusSelected = document.getElementById('corpus-selected');
+  const mkdirName = document.getElementById('mkdir-name');
+  const mkdirBtn = document.getElementById('mkdir-btn');
+  const rmdirBtn = document.getElementById('rmdir-btn');
+  const collapseAllBtn = document.getElementById('collapse-all');
+  const selectRootBtn = document.getElementById('select-root');
+  const syncBtn = document.getElementById('sync-vs');
+  const sourceLabelSel = document.getElementById('source-label-mode');
+
+  let collapsed = new Set();
+  let selectedDir = '';
+
+  corpusPick?.addEventListener('click', () => corpusFile.click());
+  corpusFile?.addEventListener('change', () => {
+    const f = corpusFile.files && corpusFile.files[0];
+    corpusChosen.textContent = f ? f.name : '';
+  });
+
+  function ensureSelected(dir) {
+    selectedDir = dir;
+    corpusRelDir.value = dir;
+    corpusSelected.textContent = dir ? dir : '/';
+    // Highlight selected folder label elements
+    corpusTree.querySelectorAll('[data-folder]').forEach(el => {
+      const p = el.getAttribute('data-folder') || '';
+      if (p === dir) el.classList.add('bg-sky-50'); else el.classList.remove('bg-sky-50');
+    });
+  }
+
+  function buildTree(rows) {
+    const root = {};
+    for (const r of rows) {
+      const parts = r.relpath.split('/');
+      let node = root;
+      const isDir = (r.kind === 'dir');
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        const isLast = i === parts.length - 1;
+        if (isLast) {
+          if (isDir) {
+            // ensure this directory node exists
+            node[part] = node[part] || {};
+          } else {
+            node['$files'] = node['$files'] || [];
+            node['$files'].push({ name: part, info: r, path: parts.slice(0, i).join('/') });
+          }
+        } else {
+          node[part] = node[part] || {};
+          node = node[part];
+        }
+      }
+    }
+    return root;
+  }
+
+  function countFiles(node) {
+    let c = 0;
+    if (node['$files']) c += node['$files'].length;
+    for (const k of Object.keys(node)) {
+      if (k === '$files') continue;
+      c += countFiles(node[k]);
+    }
+    return c;
+  }
+
+  function renderTree(node, basePath='') {
+    const ul = document.createElement('ul');
+    ul.className = 'pl-4 list-disc';
+    const folders = Object.keys(node).filter(k => k !== '$files').sort();
+    for (const name of folders) {
+      const path = basePath ? `${basePath}/${name}` : name;
+      const li = document.createElement('li');
+      li.innerHTML = `<div class="cursor-pointer px-1 rounded hover:bg-slate-50 font-medium text-slate-700" data-folder="${path}">${name}/</div>`;
+      const child = renderTree(node[name], path);
+      li.appendChild(child);
+      ul.appendChild(li);
+    }
+    // files in this level
+    if (node['$files']) {
+      for (const f of node['$files'].sort((a,b)=>a.name.localeCompare(b.name))) {
+        const li = document.createElement('li');
+        li.textContent = f.name;
+        const btn = document.createElement('button');
+        btn.textContent = 'Видалити';
+        // Slightly softer red and a bit more left margin for clearer spacing
+        btn.className = 'ml-3 text-xs border border-red-200 text-red-600 px-2 py-0.5 rounded hover:bg-red-100';
+        btn.setAttribute('data-rel', f.info.relpath);
+        btn.addEventListener('click', async () => {
+          const rel = btn.getAttribute('data-rel');
+          if (!confirm(`Видалити ${rel}?`)) return;
+          try {
+            const r = await fetch('/api/corpus/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ relpath: rel }) });
+            const j = await r.json();
+            if (!j.deleted) alert('Не вдалося видалити'); else loadCorpus();
+          } catch { alert('Помилка видалення'); }
+        });
+        li.appendChild(btn);
+        ul.appendChild(li);
+      }
+    }
+    return ul;
+  }
+
+  // Minimal, indented tree with native triangles via <details>/<summary>
+  let expandAll = true;
+
+  function renderTree2(node, basePath='', level=0) {
+    const container = document.createElement('div');
+    const folders = Object.keys(node).filter(k => k !== '$files').sort();
+    for (const name of folders) {
+      const path = basePath ? `${basePath}/${name}` : name;
+      const details = document.createElement('details');
+      if (expandAll) {
+        details.setAttribute('open', '');
+      }
+      const summary = document.createElement('summary');
+      summary.setAttribute('data-folder', path);
+      summary.className = 'cursor-pointer font-medium text-slate-700';
+      summary.style.paddingLeft = `${level * 16}px`;
+      summary.textContent = `${name}/`;
+      details.appendChild(summary);
+      const child = renderTree2(node[name], path, level + 1);
+      details.appendChild(child);
+      container.appendChild(details);
+    }
+    if (node['$files']) {
+      for (const f of node['$files'].sort((a,b)=>a.name.localeCompare(b.name))) {
+        const row = document.createElement('div');
+        row.style.paddingLeft = `${level * 16 + 16}px`;
+        const label = document.createElement('span');
+        label.textContent = f.name;
+        label.className = 'text-slate-700';
+        const btn = document.createElement('button');
+        btn.textContent = 'Видалити';
+        btn.className = 'ml-2 text-xs border border-red-300 text-red-700 px-1.5 py-0.5 rounded hover:bg-red-50';
+        btn.setAttribute('data-rel', f.info.relpath);
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const rel = btn.getAttribute('data-rel');
+          if (!confirm(`Видалити ${rel}?`)) return;
+          try {
+            const r = await fetch('/api/corpus/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ relpath: rel }) });
+            const j = await r.json();
+            if (!j.deleted) alert('Не вдалося видалити'); else loadCorpus();
+          } catch { alert('Помилка видалення'); }
+        });
+        row.appendChild(label);
+        row.appendChild(btn);
+        container.appendChild(row);
+      }
+    }
+    return container;
+  }
+
+  async function loadCorpus() {
+    try {
+      const res = await fetch(`/api/corpus/list?page=1&page_size=100000`);
+      const j = await res.json();
+      const rows = j.results || [];
+      const tree = buildTree(rows);
+      corpusTree.innerHTML = '';
+      const dom = renderTree2(tree, '', 0);
+      corpusTree.appendChild(dom);
+      // wire events
+      corpusTree.querySelectorAll('button.toggle').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const p = btn.getAttribute('data-path');
+          if (collapsed.has(p)) collapsed.delete(p); else collapsed.add(p);
+          loadCorpus();
+        });
+      });
+      corpusTree.querySelectorAll('.set-dest').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const p = btn.getAttribute('data-folder') || '';
+          ensureSelected(p);
+        });
+      });
+      corpusTree.querySelectorAll('[data-folder]').forEach(div => {
+        div.addEventListener('click', (e) => {
+          // avoid double-handling when clicking nested button
+          const t = e.target;
+          if (t && t.classList && t.classList.contains('set-dest')) return;
+          const p = div.getAttribute('data-folder') || '';
+          ensureSelected(p);
+        });
+      });
+      corpusTree.querySelectorAll('.btn-del').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const rel = btn.getAttribute('data-rel');
+          if (!confirm(`Видалити ${rel}?`)) return;
+          try {
+            const r = await fetch('/api/corpus/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ relpath: rel }) });
+            const j = await r.json();
+            if (!j.deleted) alert('Не вдалося видалити'); else loadCorpus();
+          } catch { alert('Помилка видалення'); }
+        });
+      });
+      // default select root if none
+      if (selectedDir === '') ensureSelected('');
+    } catch (e) {
+      corpusTree.innerHTML = '<div class="text-red-600">Не вдалося завантажити список</div>';
+    }
+  }
+
+  corpusRefresh?.addEventListener('click', () => loadCorpus());
+
+  collapseAllBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    expandAll = false;
+    loadCorpus();
+  });
+
+  selectRootBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    ensureSelected('');
+  });
+
+  syncBtn?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const prevText = syncBtn.textContent;
+    syncBtn.textContent = 'Синхронізація…';
+    syncBtn.setAttribute('disabled', 'disabled');
+    try {
+      const r = await fetch('/api/corpus/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'apply' }) });
+      const j = await r.json();
+      if (!j.ok) alert('Синхронізація не вдалася: ' + (j.error || '')); else alert('Синхронізація завершена');
+      loadCorpus();
+    } catch (err) {
+      alert('Синхронізація не вдалася');
+    } finally {
+      syncBtn.removeAttribute('disabled');
+      syncBtn.textContent = prevText;
+    }
+  });
+
+  // Initialize source label selector from server
+  (async function initSourceLabel() {
+    try {
+      const r = await fetch('/api/source_label');
+      const j = await r.json();
+      if (j && j.mode && sourceLabelSel) {
+        sourceLabelSel.value = j.mode;
+      }
+    } catch {}
+  })();
+
+  sourceLabelSel?.addEventListener('change', async () => {
+    try {
+      const mode = sourceLabelSel.value;
+      await fetch('/api/source_label', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) });
+      alert('Режим відображення джерела змінено. Нові запити/обробки використовуватимуть новий формат.');
+    } catch {
+      alert('Не вдалося змінити режим відображення джерела');
+    }
+  });
+
+  mkdirBtn?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const name = (mkdirName.value || '').trim();
+    if (!name) return;
+    try {
+      const r = await fetch('/api/corpus/mkdir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parent: selectedDir, name }) });
+      const j = await r.json();
+      if (!j.created) { alert('Не вдалося створити папку'); return; }
+      mkdirName.value = '';
+      // select newly created folder
+      ensureSelected(selectedDir ? `${selectedDir}/${name}` : name);
+      loadCorpus();
+    } catch { alert('Помилка створення папки'); }
+  });
+
+  rmdirBtn?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    if (!selectedDir) { alert('Оберіть папку для видалення'); return; }
+    if (!confirm(`Видалити папку ${selectedDir} та всі файли?`)) return;
+    try {
+      const r = await fetch('/api/corpus/rmdir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ relpath: selectedDir }) });
+      const j = await r.json();
+      if (!j.deleted) { alert('Не вдалося видалити папку'); return; }
+      // select parent folder
+      const parts = selectedDir.split('/');
+      parts.pop();
+      ensureSelected(parts.join('/') || '');
+      loadCorpus();
+    } catch { alert('Помилка видалення папки'); }
+  });
+
+  document.getElementById('corpus-upload-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!corpusFile.files || !corpusFile.files.length) return;
+    const fd = new FormData();
+    fd.append('file', corpusFile.files[0]);
+    if (corpusRelDir.value) fd.append('rel_dir', corpusRelDir.value);
+    try {
+      const r = await fetch('/api/corpus/upload', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!j.saved) alert('Завантаження не вдалося');
+      corpusFile.value = '';
+      corpusChosen.textContent = '';
+      loadCorpus();
+    } catch { alert('Помилка завантаження'); }
+  });
+</script>
+{% endblock %}

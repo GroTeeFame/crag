@@ -1,0 +1,17 @@
+[Unit]
+Description=cRAG RQ worker (docjobs)
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=crag
+Group=crag
+WorkingDirectory=/path/to/app
+EnvironmentFile=/etc/crag.env
+ExecStart=/opt/crag/venv/bin/rq worker -u ${REDIS_URL} ${RQ_QUEUE_NAME}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+

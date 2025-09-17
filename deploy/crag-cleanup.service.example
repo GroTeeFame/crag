@@ -1,0 +1,13 @@
+[Unit]
+Description=cRAG results cleanup (delete old docx)
+After=network.target
+
+[Service]
+Type=oneshot
+User=crag
+Group=crag
+WorkingDirectory=/path/to/app
+EnvironmentFile=/etc/crag.env
+# Adjust venv/python path as needed
+ExecStart=/opt/crag/venv/bin/python /path/to/app/scripts/cleanup_results.py --days 30 --root /path/to/app/docx_results
+

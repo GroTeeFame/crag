@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <title>Помічник з ВНД</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Local Tailwind build -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/tailwind.css') }}" />
+</head>
+<body class="bg-slate-50 text-slate-900 h-screen">
+  <div class="max-w-5xl mx-auto py-6 px-4 h-full flex flex-col">
+    <header class="mb-6">
+      <h1 class="text-2xl font-semibold">Помічник з ВНД</h1>
+      <p class="text-sm text-slate-500">Model: {{ model }} · DB: {{ db_path }} · Collection: {{ collection }}</p>
+    </header>
+
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

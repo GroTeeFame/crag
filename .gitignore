@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Env and secrets
+.env
+
+# App data
+uploads/
+docx_results/
+vectorstore/
+work_results/
+full_prompt/
+token_usage.log
+extracted_files/
+documents/
+NBU/
+documents/documents_converted_to_md/
+filename.txt
+
+# Local dev environments
+venv/
+.venv/
+.idea/
+.vscode/
+
+# Debug artifacts
+test_chunking*.json
+
+# OS
+.DS_Store
+node_modules/
+logs/
