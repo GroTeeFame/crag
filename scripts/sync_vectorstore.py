@@ -46,6 +46,14 @@ sys.path.append(parent_dir)
 
 from config import Config
 from rag_logic import upsert_ird_document
+# Prefer a bundled modern SQLite (pysqlite3) if system sqlite3 is too old
+try:
+    __import__("pysqlite3")
+    import sys as _sys
+    _sys.modules["sqlite3"] = _sys.modules.pop("pysqlite3")
+except Exception:
+    pass
+
 from langchain_chroma import Chroma
 from chromadb import PersistentClient
 from rag_logic import get_embedding_model

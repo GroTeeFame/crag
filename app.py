@@ -33,6 +33,14 @@ from config import Config
 from rag_logic import get_llm, get_embedding_model, should_rebuild_vectorstore, rebuild_vector_store
 from read_split_nbu import split_docx_to_question_with_ids
 from save_results import add_comment_to_paragraphs, sanitize_markdown
+# Prefer a bundled modern SQLite (pysqlite3) if system sqlite3 is too old
+try:
+    __import__("pysqlite3")
+    import sys as _sys
+    _sys.modules["sqlite3"] = _sys.modules.pop("pysqlite3")
+except Exception:
+    pass
+
 from langchain_chroma import Chroma
 from chromadb import PersistentClient
 from chromadb.config import Settings as ChromaSettings

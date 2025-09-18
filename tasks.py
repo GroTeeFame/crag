@@ -10,6 +10,14 @@ from typing import Any, Dict
 import redis
 
 from docx import Document
+# Prefer a bundled modern SQLite (pysqlite3) if system sqlite3 is too old
+try:
+    __import__("pysqlite3")
+    import sys as _sys
+    _sys.modules["sqlite3"] = _sys.modules.pop("pysqlite3")
+except Exception:
+    pass
+
 from langchain_chroma import Chroma
 from chromadb import PersistentClient
 from langchain_community.retrievers import BM25Retriever
