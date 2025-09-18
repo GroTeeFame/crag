@@ -33,7 +33,9 @@ from config import Config
 from rag_logic import get_llm, get_embedding_model, should_rebuild_vectorstore, rebuild_vector_store
 from read_split_nbu import split_docx_to_question_with_ids
 from save_results import add_comment_to_paragraphs, sanitize_markdown
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
+from chromadb import PersistentClient
+from chromadb.config import Settings as ChromaSettings
 from langchain.schema import Document as LangchainDocument
 from langchain_community.retrievers import BM25Retriever
 
@@ -345,10 +347,11 @@ def init_vectorstore_and_models():
     # Build or open DB
     if should_rebuild_vectorstore():
         rebuild_vector_store()
+    client = PersistentClient(path=Config.DB_NAME)
     DB = Chroma(
+        client=client,
         collection_name=Config.COLLECTION_NAME,
         embedding_function=get_embedding_model(),
-        persist_directory=Config.DB_NAME
     )
     # LLMs
     LLM_CHAT = get_llm(kind='question')

@@ -1,0 +1,155 @@
+Hosting Instructions (User-Scoped) — CentOS, user: p-rzuben10302
+================================================================
+
+This guide assumes you only have access as the Linux user `p-rzuben10302` (no sudo). It shows how to:
+- Push code to GitHub
+- Deploy and run the app entirely under your user (port 8000)
+- Keep it running with tmux/nohup
+- Optionally access it via SSH tunnel if port 8000 isn’t open
+
+Part 1 — Push the code to GitHub (from your local machine)
+---------------------------------------------------------
+1) Create a repo at GitHub under your account (example name: crag)
+   https://github.com/new
+
+2) In your local project directory:
+   git init
+   git add -A
+   git commit -m "Initial import"
+   git branch -M main
+   git remote add origin https://github.com/p-rzuben10302/crag.git
+   git push -u origin main
+
+Notes:
+- Do not push `.env` or secrets. `.gitignore` already excludes it.
+- By default, the `documents/` folder is NOT ignored; it’s recommended to keep `documents/` out of Git for privacy and repo size. You can upload documents later via the app or copy them to the server.
+
+Part 2 — Prepare runtime environment on the server (user-only)
+--------------------------------------------------------------
+Login: ssh p-rzuben10302@<server-ip>
+
+Choose a working directory:
+  mkdir -p $HOME/apps && cd $HOME/apps
+
+Option A (recommended): Miniconda (no root required)
+  # Download and install Miniconda into your home
+  curl -fsSL -o $HOME/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+  bash $HOME/miniconda.sh -b -p $HOME/miniconda3
+  eval "$($HOME/miniconda3/bin/conda shell.bash hook)"
+  conda create -y -n crag python=3.10
+  conda activate crag
+  # Install pandoc (required for DOCX→Markdown)
+  conda install -y -c conda-forge pandoc
+
+Option B: If you already have Python 3.10+ available
+  # You can create a venv (but you still need pandoc somehow)
+  python3 -m venv $HOME/venvs/crag
+  source $HOME/venvs/crag/bin/activate
+  # Ask an admin to install pandoc system-wide, or use Miniconda above.
+
+Part 3 — Clone the repo and install dependencies
+-----------------------------------------------
+cd $HOME/apps
+git clone https://github.com/p-rzuben10302/crag.git app
+cd app
+
+# If using conda (Option A): make sure the env is active
+#   conda activate crag
+
+pip install --upgrade pip wheel
+pip install -r requirements.txt
+
+# Quick pandoc check (should print a version)
+python -c "import pypandoc; print(pypandoc.get_pandoc_version())"
+
+Part 4 — Configure environment
+------------------------------
+Create a `.env` file in the project root (`$HOME/apps/app/.env`) with keys and toggles. Example:
+
+SECRET_KEY=please-change-me
+DEBUG=0
+
+# Azure OpenAI (replace with your values)
+GPT_ENDPOINT=https://<your-azure-endpoint>
+GPT_KEY=<your-azure-api-key>
+GPT_DEPLOYMENT_NAME_4_1=<your-gpt-4.1-deployment>
+
+# Azure Embeddings (text-embedding-3-large)
+TE3L_ENDPOINT=https://<your-azure-embeddings-endpoint>
+TE3L_KEY=<your-azure-embeddings-key>
+
+# Keep Redis/RQ disabled for user-only (single-process) mode
+USE_REDIS_TASKS=0
+USE_RQ_TASKS=0
+
+# Optional logging directory (inside repo)
+LOG_DIR=$HOME/apps/app/logs
+
+# Optional source label (filename or docx_relpath)
+SOURCE_LABEL_MODE=filename
+
+Also set internal login in `config.py` (Config.LOGIN/PASSWORD) if you want non-default credentials for the Documents tab.
+
+Part 5 — First run and directories
+----------------------------------
+The app creates required folders on startup, but ensure you have a `documents/` folder:
+  mkdir -p $HOME/apps/app/documents
+
+Start the app (single process, no Redis needed):
+  cd $HOME/apps/app
+  gunicorn -c gunicorn.conf.py app:app
+
+This binds to port 8000 on the server. If the firewall blocks it (common on servers), use an SSH tunnel from your local machine:
+  ssh -L 8000:127.0.0.1:8000 p-rzuben10302@<server-ip>
+Then open http://127.0.0.1:8000 locally.
+
+Keep it running (two options):
+  # tmux (recommended if available)
+  tmux new -s crag
+  cd $HOME/apps/app && conda activate crag && gunicorn -c gunicorn.conf.py app:app
+  # Detach: Ctrl+b then d; Reattach later: tmux attach -t crag
+
+  # nohup fallback
+  cd $HOME/apps/app
+  nohup gunicorn -c gunicorn.conf.py app:app > logs/web.out 2>&1 & echo $! > web.pid
+  # Stop later: kill $(cat web.pid)
+
+Part 6 — Load documents and sync the vector store
+-------------------------------------------------
+Option A: Upload via UI (Documents tab) after logging in.
+
+Option B: Copy files via scp then sync:
+  scp /path/to/local/*.docx p-rzuben10302@<server-ip>:$HOME/apps/app/documents/
+  # Initialize or re-sync the vector store
+  curl -s -X POST http://127.0.0.1:8000/api/corpus/sync -H 'Content-Type: application/json' -d '{"mode":"apply"}' | jq .
+
+Notes:
+- The sync endpoint auto-initializes the manifest if missing.
+- Deleting .docx from documents/ then clicking “Синхронізувати” removes the corresponding vectors.
+
+Part 7 — Usage notes
+--------------------
+- Open the app at http://127.0.0.1:8000 (local or via SSH tunnel).
+- The “Документи” tab requires a login (Config.LOGIN/PASSWORD in config.py). You can change them.
+- For long doc processing, progress is shown live via SSE.
+- Outputs appear in `docx_results/` and can be downloaded from the Results tab.
+
+Part 8 — Updating the app
+-------------------------
+cd $HOME/apps/app
+git pull --ff-only
+# (If requirements changed)
+pip install -r requirements.txt
+# Restart Gunicorn (tmux: stop and start again; nohup: kill $(cat web.pid) then start)
+
+Optional (requires admin help)
+------------------------------
+- Reverse proxy (Nginx) on port 80 and a firewall opening: requires root/admin privileges.
+- Redis/RQ for multi-worker background jobs: requires Redis installation and system services; the app works fine without them for single-user/low volume.
+
+Troubleshooting
+---------------
+- Pandoc missing: ensure you ran `conda install -y -c conda-forge pandoc` and `python -c "import pypandoc; print(pypandoc.get_pandoc_version())"` works.
+- Azure/OpenAI credentials: check `.env` and network egress; errors surface at /api/chat or when processing documents.
+- If port 8000 is blocked inbound, use the SSH tunnel method shown above.
+

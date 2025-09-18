@@ -10,7 +10,8 @@ from typing import Any, Dict
 import redis
 
 from docx import Document
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
+from chromadb import PersistentClient
 from langchain_community.retrievers import BM25Retriever
 
 from config import Config
@@ -119,10 +120,11 @@ def rq_process_document_task(task_id: str):
         return
 
     # Open DB + LLM for worker
+    client = PersistentClient(path=Config.DB_NAME)
     DB = Chroma(
+        client=client,
         collection_name=Config.COLLECTION_NAME,
         embedding_function=get_embedding_model(),
-        persist_directory=Config.DB_NAME
     )
     LLM_DOC = get_llm(kind='document')
 

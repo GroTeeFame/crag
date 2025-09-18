@@ -46,7 +46,8 @@ sys.path.append(parent_dir)
 
 from config import Config
 from rag_logic import upsert_ird_document
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
+from chromadb import PersistentClient
 from rag_logic import get_embedding_model
 
 
@@ -268,9 +269,10 @@ def _collect_vectorstore_group_ids() -> Dict[str, Any]:
 
     { 'groups': set([...]), 'labels': {group_id: 'parent_docx_basename or filename'} }
     """
+    client = PersistentClient(path=Config.DB_NAME)
     db = Chroma(
+        client=client,
         collection_name=Config.COLLECTION_NAME,
-        persist_directory=Config.DB_NAME,
         embedding_function=get_embedding_model(),
     )
     col = db._collection
@@ -314,9 +316,10 @@ def _collect_db_docs_by_relpath() -> Dict[str, Dict[str, Any]]:
       { relpath: { 'hash': sha256, 'any_label': str } }
     Only includes entries that have docx_relpath in metadata.
     """
+    client = PersistentClient(path=Config.DB_NAME)
     db = Chroma(
+        client=client,
         collection_name=Config.COLLECTION_NAME,
-        persist_directory=Config.DB_NAME,
         embedding_function=get_embedding_model(),
     )
     col = db._collection

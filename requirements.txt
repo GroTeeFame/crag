@@ -6,6 +6,7 @@ langchain-community>=0.2,<0.3
 langchain-openai>=0.1.7,<0.2
 openai>=1.40,<2
 chromadb>=0.5,<0.6
+langchain-chroma>=0.1,<0.2
 python-docx>=1.1,<1.2
 tiktoken>=0.7,<0.8
 colorama>=0.4,<0.5
@@ -18,3 +19,6 @@ redis>=5,<6
 # RQ for multi-worker background jobs
 rq>=1.16,<2
 # chunking-evaluation  # ensure your internal/private package is available or vendor its code
+fuzzywuzzy>=0.18,<1
+# Optional speedup for fuzzywuzzy (if available on your platform)
+python-Levenshtein>=0.21,<0.23

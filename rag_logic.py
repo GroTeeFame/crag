@@ -6,7 +6,9 @@ import logging
 import datetime
 
 from langchain.schema import Document as LangchainDocument
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
+from chromadb import PersistentClient
+from chromadb.config import Settings as ChromaSettings
 from langchain_openai import AzureOpenAIEmbeddings, AzureChatOpenAI
 
 from typing import Any, Dict
@@ -227,10 +229,11 @@ def rebuild_vector_store():
 
     # Single embedding client and collection for the whole run
     embedding_model = get_embedding_model()
+    client = PersistentClient(path=db_path)
     db = Chroma(
+        client=client,
         collection_name=Config.COLLECTION_NAME,
         embedding_function=embedding_model,
-        persist_directory=db_path
     )
 
     total_files = 0
@@ -269,9 +272,10 @@ def _open_db_for_update() -> Chroma:
     except Exception:
         pass
     embedding_model = get_embedding_model()
+    client = PersistentClient(path=Config.DB_NAME)
     db = Chroma(
+        client=client,
         collection_name=Config.COLLECTION_NAME,
-        persist_directory=Config.DB_NAME,
         embedding_function=embedding_model,
     )
     return db
@@ -441,10 +445,11 @@ def main_logic(mode, nbu_document_name=''):
         )
 
         embedding_model = get_embedding_model()
+        client = PersistentClient(path=Config.DB_NAME)
         db = Chroma(
+            client=client,
             collection_name=Config.COLLECTION_NAME,
-            persist_directory=Config.DB_NAME,
-            embedding_function=embedding_model
+            embedding_function=embedding_model,
         )
         try:
             count = db._collection.count()

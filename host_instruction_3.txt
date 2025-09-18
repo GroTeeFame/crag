@@ -1,0 +1,209 @@
+Hosting & Deployment (with sudo) — Run as user: p-rzuben10302
+=============================================================
+
+Goal: Deploy the app on a CentOS/Oracle Linux server using system packages and systemd, but run all services as your Linux user `p-rzuben10302` (not root). The app will listen on port 20000.
+
+Part 1 — Push code to GitHub (local machine)
+-------------------------------------------
+1) Create a repo on GitHub under your account (e.g., crag)
+   https://github.com/new
+
+2) In your local project directory:
+   git init
+   git add -A
+   git commit -m "Initial import"
+   git branch -M main
+   git remote add origin https://github.com/p-rzuben10302/crag.git
+   git push -u origin main
+
+Notes:
+- `.env` is excluded by .gitignore — do not commit secrets.
+- Recommended: keep `documents/` out of Git; upload later via UI or copy in via scp.
+
+Part 2 — Prepare the server
+---------------------------
+SSH in: ssh p-rzuben10302@<server-ip>
+
+2.1) Install OS packages (as root via sudo)
+   sudo yum -y update
+   sudo yum -y install epel-release
+   sudo yum -y install python3 python3-devel gcc gcc-c++ make openssl-devel libffi-devel git nginx redis pandoc
+   # Optional if some wheels require builds
+   sudo yum -y install rust cargo cmake || true
+   # If SELinux is enforcing and you will proxy via Nginx:
+   sudo setsebool -P httpd_can_network_connect 1 || true
+
+2.2) Create app folders owned by your user
+   sudo mkdir -p /opt/crag
+   sudo chown -R p-rzuben10302:p-rzuben10302 /opt/crag
+
+Part 3 — Clone code and create venv (as your user)
+--------------------------------------------------
+sudo -u p-rzuben10302 -H bash -lc "cd /opt/crag && git clone https://github.com/p-rzuben10302/crag.git app"
+sudo -u p-rzuben10302 -H bash -lc "python3 -m venv /opt/crag/venv" #TODO: its last command that is DONE
+sudo -u p-rzuben10302 -H bash -lc "/opt/crag/venv/bin/pip install --upgrade pip wheel"
+sudo -u p-rzuben10302 -H bash -lc "/opt/crag/venv/bin/pip install -r /opt/crag/app/requirements.txt"
+
+Quick pandoc check:
+   pandoc --version
+
+Part 4 — Configure environment
+------------------------------
+Create an environment file for systemd: #TODO: IM HERE
+   sudo tee /etc/crag.env >/dev/null <<'EOF'
+SECRET_KEY=please-change-me
+DEBUG=0
+
+# Azure OpenAI (replace with your values)
+GPT_ENDPOINT=https://<your-azure-endpoint>
+GPT_KEY=<your-azure-api-key>
+GPT_DEPLOYMENT_NAME_4_1=<your-gpt-4.1-deployment>
+
+# Azure Embeddings (text-embedding-3-large)
+TE3L_ENDPOINT=https://<your-azure-embeddings-endpoint>
+TE3L_KEY=<your-azure-embeddings-key>
+
+# Single-process mode (no Redis/RQ). Set to 1 if you want RQ workers.
+USE_REDIS_TASKS=0
+LIMITER_STORAGE_URI=memory://
+USE_RQ_TASKS=0
+RQ_QUEUE_NAME=docjobs
+RQ_JOB_TIMEOUT=7200
+
+# Logging directory
+LOG_DIR=/opt/crag/app/logs
+GUNICORN_BIND=127.0.0.1:20000
+EOF
+
+Also set internal login credentials in `config.py` (Config.LOGIN / Config.PASSWORD) if you want non-default creds for the Documents tab.
+
+Part 5 — Ensure runtime directories
+-----------------------------------
+The app will create them on startup, but you can pre-create and set perms:
+   sudo -u p-rzuben10302 -H bash -lc "mkdir -p /opt/crag/app/{documents,uploads,docx_results,logs,work_results,full_prompt,extracted_files}"
+   sudo -u p-rzuben10302 -H bash -lc "mkdir -p /opt/crag/app/vectorstore"
+
+Part 6 — Systemd services (run AS your user)
+--------------------------------------------
+6.1) Web (Gunicorn)
+   sudo tee /etc/systemd/system/crag.service >/dev/null <<'EOF'
+[Unit]
+Description=cRAG web (Gunicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=p-rzuben10302
+Group=p-rzuben10302
+WorkingDirectory=/opt/crag/app
+EnvironmentFile=/etc/crag.env
+ExecStart=/opt/crag/venv/bin/gunicorn -c gunicorn.conf.py app:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+6.2) Background worker (RQ) — optional
+To keep everything under your user, this unit runs as `User=p-rzuben10302`. Enable Redis and RQ in /etc/crag.env (set USE_REDIS_TASKS=1, LIMITER_STORAGE_URI, USE_RQ_TASKS=1) before enabling this.
+
+   sudo tee /etc/systemd/system/crag-rq-worker.service >/dev/null <<'EOF'
+[Unit]
+Description=cRAG RQ worker (docjobs)
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=p-rzuben10302
+Group=p-rzuben10302
+WorkingDirectory=/opt/crag/app
+EnvironmentFile=/etc/crag.env
+ExecStart=/opt/crag/venv/bin/rq worker -u ${REDIS_URL} ${RQ_QUEUE_NAME}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+Part 7 — Nginx reverse proxy (optional but recommended)
+-------------------------------------------------------
+   sudo tee /etc/nginx/conf.d/crag.conf >/dev/null <<'EOF'
+server {
+    listen 80;
+    server_name _;
+
+    client_max_body_size 20m;  # match Flask MAX_CONTENT_LENGTH
+
+    location /static/ {
+        alias /opt/crag/app/static/;
+        access_log off;
+        expires 7d;
+    }
+
+    # SSE endpoint must disable buffering
+    location /api/progress/ {
+        proxy_pass http://127.0.0.1:20000;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600;
+        proxy_send_timeout 3600;
+        proxy_buffering off;
+        add_header X-Accel-Buffering no;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:20000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+EOF
+#TODO: LAST
+Reload/enable services:
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now crag.service
+   # Optional
+   sudo systemctl enable --now redis
+   sudo systemctl enable --now crag-rq-worker.service
+   sudo systemctl enable --now nginx
+
+Firewalld (if enabled):
+   sudo firewall-cmd --add-port=20000/tcp --permanent || true
+   sudo firewall-cmd --reload || true
+
+Part 8 — Verify
+----------------
+App health:
+   curl -s http://127.0.0.1:20000/api/health | jq . || curl -s http://127.0.0.1:20000/api/health
+
+Open in browser: http://<server-ip>:20000/
+
+Part 9 — Manage documents and vector store
+------------------------------------------
+Upload via UI (Documents tab), or copy files then sync:
+   scp /path/to/*.docx p-rzuben10302@<server-ip>:/opt/crag/app/documents/
+   curl -s -X POST http://127.0.0.1:20000/api/corpus/sync -H 'Content-Type: application/json' -d '{"mode":"apply"}' | jq .
+
+Notes:
+- Sync auto-initializes manifest if missing.
+- Deleting a .docx and running Sync removes its vectors (fixed to use prior content-hash).
+
+Part 10 — Updating
+-------------------
+cd /opt/crag/app
+sudo -u p-rzuben10302 -H bash -lc "git pull --ff-only"
+sudo -u p-rzuben10302 -H bash -lc "/opt/crag/venv/bin/pip install -r requirements.txt"
+sudo systemctl restart crag.service
+
+Troubleshooting
+---------------
+- Pandoc missing: `pandoc --version` should print a version; install with yum.
+- Credentials/quotas: check /etc/crag.env and app logs at /opt/crag/app/logs/app.log.
+- If documents don’t show, ensure they are under /opt/crag/app/documents/ and owned/readable by `p-rzuben10302`.
