@@ -6,7 +6,14 @@ import re
 
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.opc.packuri import PackURI
-from docx.parts.comments import CommentsPart
+# CommentsPart import path differs across python-docx builds; try both
+try:
+    from docx.parts.comments import CommentsPart
+except Exception:
+    try:
+        from docx.parts.comments_part import CommentsPart  # type: ignore
+    except Exception:
+        CommentsPart = None  # type: ignore
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -190,6 +197,11 @@ def add_comment_to_paragraphs(doc, para_ids, comment_text, author="AI helper", i
     try:
         comments_part = part._comments_part
     except AttributeError:
+        if CommentsPart is None:
+            # Fallback: if comments API is unavailable, skip creating comment part
+            # Color was already applied above, so at least the text is marked.
+            dprint("CommentsPart unavailable in this python-docx build; skipping comment creation")
+            return
         comments_part = CommentsPart(part.package, PackURI("/word/comments.xml"), RT.COMMENTS)
         part._comments_part = comments_part
         part.relate_to(comments_part, RT.COMMENTS)
@@ -282,6 +294,9 @@ def add_comment_to_text_range(doc, target_text, comment_text, author="AI helper"
     try:
         comments_part = part._comments_part
     except AttributeError:
+        if CommentsPart is None:
+            dprint("CommentsPart unavailable in this python-docx build; skipping comment creation")
+            return
         comments_part = CommentsPart(part.package, PackURI("/word/comments.xml"), RT.COMMENTS)
         part._comments_part = comments_part
         part.relate_to(comments_part, RT.COMMENTS)
