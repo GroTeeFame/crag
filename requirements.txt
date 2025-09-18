@@ -7,7 +7,7 @@ langchain-openai>=0.1.7,<0.2
 openai>=1.40,<2
 chromadb>=0.5,<0.6
 langchain-chroma>=0.1,<0.2
-\# Use a recent SQLite runtime even on old systems (OL9/RHEL-like)
+# Use a recent SQLite runtime even on old systems (OL9/RHEL-like)
 pysqlite3-binary>=0.5,<0.6
 python-docx>=1.1,<1.2
 tiktoken>=0.7,<0.8
