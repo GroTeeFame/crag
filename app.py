@@ -9,7 +9,7 @@ import unicodedata
 import re
 from datetime import datetime
 import concurrent.futures
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import logging
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
@@ -234,7 +234,7 @@ def task_create(task_id: str, data: dict):
         data = {**data, "stream_queue": q}
         TASKS[task_id] = data
 
-def task_get(task_id: str) -> dict | None:
+def task_get(task_id: str) -> Optional[dict]:
     if USE_REDIS and REDIS is not None:
         h = REDIS.hgetall(_task_key(task_id))
         if not h:

@@ -29,7 +29,7 @@ import json
 import time
 import hashlib
 import argparse
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from dotenv import load_dotenv
 
@@ -137,7 +137,7 @@ def scan_docs() -> Dict[str, Dict[str, Any]]:
     return out
 
 
-def run_sync(manifest_path: str | None = None, init_manifest: bool = False, dry_run: bool = False) -> Dict[str, Any]:
+def run_sync(manifest_path: Optional[str] = None, init_manifest: bool = False, dry_run: bool = False) -> Dict[str, Any]:
     """Programmatic sync entry.
 
     Returns a dict report with keys like:
@@ -371,7 +371,7 @@ def _collect_db_docs_by_relpath() -> Dict[str, Dict[str, Any]]:
     return out
 
 
-def run_init_from_db(manifest_path: str | None = None) -> Dict[str, Any]:
+def run_init_from_db(manifest_path: Optional[str] = None) -> Dict[str, Any]:
     """Initialize the manifest from documents already present in the vector store.
 
     Uses docx_relpath and doc_content_sha256 from chunk metadata (new pipeline),

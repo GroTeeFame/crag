@@ -5,7 +5,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import redis
 
@@ -79,7 +79,7 @@ def _checkpoint_path(task_id: str) -> str:
     return os.path.join(Config.CHECKPOINT_DIR, f"{task_id}.json")
 
 
-def _load_checkpoint(task_id: str) -> Dict[str, Any] | None:
+def _load_checkpoint(task_id: str) -> Optional[Dict[str, Any]]:
     p = _checkpoint_path(task_id)
     try:
         with open(p, "r", encoding="utf-8") as f:

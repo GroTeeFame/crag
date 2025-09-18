@@ -51,7 +51,7 @@ def _sha1(text: str) -> str:
     import hashlib
     return hashlib.sha1(text.encode("utf-8")).hexdigest()
 
-def _sha256_file(path: str) -> str | None:
+def _sha256_file(path: str) -> Optional[str]:
     try:
         import hashlib
         h = hashlib.sha256()

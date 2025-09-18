@@ -19,7 +19,7 @@ from chromadb import PersistentClient
 from chromadb.config import Settings as ChromaSettings
 from langchain_openai import AzureOpenAIEmbeddings, AzureChatOpenAI
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 
@@ -289,7 +289,7 @@ def _open_db_for_update() -> Chroma:
     return db
 
 
-def upsert_ird_document(docx_path: str, db: Chroma | None = None) -> None:
+def upsert_ird_document(docx_path: str, db: Optional[Chroma] = None) -> None:
     """Rebuild chunks for a single IRD (.docx) and update the vector store.
 
     - Preserves department by mirroring the doc's relative folder into MD output.
@@ -357,7 +357,7 @@ def upsert_ird_document(docx_path: str, db: Chroma | None = None) -> None:
     # Compute path-safe group id: sha1(relative_docx_path_without_extension)
     import hashlib
     # Prefer content hash as stable id
-    def _sha256_file(p: str) -> str | None:
+    def _sha256_file(p: str) -> Optional[str]:
         try:
             h = hashlib.sha256()
             with open(p, 'rb') as f:

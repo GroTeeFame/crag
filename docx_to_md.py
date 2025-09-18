@@ -1,7 +1,7 @@
 import os
 import sys
 import zipfile
-from typing import List
+from typing import List, Optional
 
 import pypandoc
 
@@ -53,7 +53,7 @@ def convert_docx_to_markdown(docx_path: str) -> str:
         raise RuntimeError(f"Failed to convert '{docx_path}' to Markdown: {e}")
 
 
-def read_full_document_md(file_path: str, save_folder_path: str | None = None) -> str:
+def read_full_document_md(file_path: str, save_folder_path: Optional[str] = None) -> str:
     dprint(f"{'='*33} read_full_document_md {'='*33}")
     output_dir = 'extracted_files/'
     embeddings_dir = 'word/embeddings/'
@@ -142,5 +142,4 @@ if __name__ == "__main__":
     else:
         print("No argument was added. Working with default folder")
         run_logic()
-
 

@@ -4,7 +4,7 @@ import tiktoken
 import itertools
 import re
 
-from typing import List, Iterable, Tuple
+from typing import List, Iterable, Tuple, Optional
 from operator import itemgetter
 
 from langchain.schema import Document as LangchainDocument
@@ -142,7 +142,7 @@ def make_subqueries(q: str) -> list[str]:
             seen.add(s)
     return dedup
 
-def source_label_from_meta(meta: dict, mode: str | None = None) -> str:
+def source_label_from_meta(meta: dict, mode: Optional[str] = None) -> str:
     """Return source label based on mode: 'filename' (default) or 'docx_relpath'."""
     try:
         mode_eff = (mode or getattr(Config, 'SOURCE_LABEL_MODE', 'filename')).strip().lower()
