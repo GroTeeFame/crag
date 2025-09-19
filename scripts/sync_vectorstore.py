@@ -262,10 +262,7 @@ def run_sync(manifest_path: Optional[str] = None, init_manifest: bool = False, d
                 pass
             # Finally drop manifest entry
             manifest.pop(rel, None)
-        try:
-            db.persist()
-        except Exception:
-            pass
+        # PersistentClient writes to disk automatically; no explicit persist needed
         report['applied_deletes'] = len(deleted)
 
     save_manifest(manifest_path, manifest)

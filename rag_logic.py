@@ -158,14 +158,17 @@ def _sanitize_metadata(meta: Any) -> Dict[str, Any]:
 
 
     """
-    Chroma accepts only str/int/float/bool/None.
-    Coerce everything else to JSON strings. If meta isn't a dict, return {}.
+    Chroma v0.5 requires metadata values to be str/int/float/bool only.
+    Drop None-valued keys and JSON-encode complex values. If meta isn't a dict, return {}.
     """
     if not isinstance(meta, dict):
         return {}
     out: Dict[str, Any] = {}
     for k, v in meta.items():
-        if isinstance(v, (str, int, float, bool)) or v is None:
+        if v is None:
+            # drop None to satisfy Chroma constraints
+            continue
+        if isinstance(v, (str, int, float, bool)):
             out[k] = v
         else:
             try:
@@ -262,10 +265,7 @@ def rebuild_vector_store():
                 logging.exception(f"Failed to upsert {full}")
                 raise
 
-    try:
-        db.persist()
-    except Exception:
-        pass
+    # PersistentClient writes to disk automatically; no explicit persist needed
     logging.info(f"Rebuild complete. Files processed: {total_files}")
     return db
 
@@ -416,7 +416,6 @@ def upsert_ird_document(docx_path: str, db: Optional[Chroma] = None) -> None:
         while not success:
             try:
                 db.add_documents(b_docs, ids=b_ids)
-                db.persist()
                 success = True
             except RateLimitError as e:
                 attempts += 1

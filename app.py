@@ -1038,7 +1038,7 @@ def api_corpus_delete():
             db.delete(where={"attachment_group_id": legacy_path_gid})
         except Exception:
             pass
-        db.persist()
+        # PersistentClient writes to disk automatically; no explicit persist needed
     except Exception:
         pass
 
@@ -1138,10 +1138,11 @@ def api_corpus_rmdir():
                     db.delete(where={"attachment_group_id": legacy_path_gid})
                 except Exception:
                     pass
-            try:
-                db.persist()
-            except Exception:
-                pass
+            # try:
+            #     # No explicit persist required with PersistentClient backend
+
+            # except Exception:
+            #     pass
     except Exception:
         pass
 
