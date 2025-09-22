@@ -27,8 +27,8 @@
     <div id="chat-log" class="flex-1 overflow-y-auto space-y-3 mb-4 pr-2 min-h-0">
       <!-- messages -->
     </div>
-    <form id="chat-form" class="flex gap-2">
-      <input id="chat-input" class="flex-1 border border-slate-300 rounded px-3 py-2" placeholder="Введіть запитання..." />
+    <form id="chat-form" class="flex gap-2" autocomplete="off">
+      <input id="chat-input" name="chat_input" class="flex-1 border border-slate-300 rounded px-3 py-2" placeholder="Введіть запитання..." autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" />
       <button class="bg-sky-600 text-white px-4 py-2 rounded hover:bg-sky-700">
         <img src="{{ url_for('static', filename='images/icons/send.png') }}" alt="Send" class="w-5 h-5">
       </button>
@@ -188,6 +188,10 @@
   const chatForm = document.getElementById('chat-form');
   const chatInput = document.getElementById('chat-input');
   const chatLog = document.getElementById('chat-log');
+
+  // Clear any persisted value the browser may restore
+  try { chatInput.value = ''; } catch (_) {}
+  chatInput.addEventListener('focus', () => { if (chatInput.value && chatInput.value === chatInput.getAttribute('placeholder')) chatInput.value = ''; });
 
   function addMsg(who, text) {
     const wrap = document.createElement('div');
