@@ -234,7 +234,7 @@ def run_sync(manifest_path: Optional[str] = None, init_manifest: bool = False, d
             # 1) Delete by previously recorded content-hash if present
             if prev_hash:
                 try:
-                    db.delete(where={"attachment_group_id": prev_hash})
+                    db.delete(filter={"attachment_group_id": prev_hash})
                     print("<<<<SUCCESS>>>> FILE IS DELETED")
                 except Exception:
                     print("<<<<ERROR>>>> FILE WAS NOT DELETED FROM DB!!!")
@@ -244,7 +244,7 @@ def run_sync(manifest_path: Optional[str] = None, init_manifest: bool = False, d
                 group_id = compute_attachment_group_id(full)
                 if group_id:
                     try:
-                        db.delete(where={"attachment_group_id": group_id})
+                        db.delete(filter={"attachment_group_id": group_id})
                         print("<<<<SUCCESS>>>> FILE IS DELETED")
                     except Exception:
                         print("<<<<ERROR>>>> FILE WAS NOT DELETED FROM DB!!!")
@@ -255,7 +255,7 @@ def run_sync(manifest_path: Optional[str] = None, init_manifest: bool = False, d
             try:
                 import hashlib
                 legacy_gid = hashlib.sha1(os.path.splitext(os.path.basename(full))[0].encode('utf-8')).hexdigest()
-                db.delete(where={"attachment_group_id": legacy_gid})
+                db.delete(filter={"attachment_group_id": legacy_gid})
                 print("<<<<SUCCESS>>>> FILE IS DELETED")
             except Exception:
                 print("<<<<ERROR>>>> FILE WAS NOT DELETED FROM DB!!!")
@@ -263,7 +263,7 @@ def run_sync(manifest_path: Optional[str] = None, init_manifest: bool = False, d
             try:
                 rel_no_ext = os.path.splitext(rel.replace("\\", "/"))[0]
                 legacy_path_gid = hashlib.sha1(rel_no_ext.encode('utf-8')).hexdigest()
-                db.delete(where={"attachment_group_id": legacy_path_gid})
+                db.delete(filter={"attachment_group_id": legacy_path_gid})
                 print("<<<<SUCCESS>>>> FILE IS DELETED")
             except Exception:
                 print("<<<<ERROR>>>> FILE WAS NOT DELETED FROM DB!!!")
@@ -271,7 +271,7 @@ def run_sync(manifest_path: Optional[str] = None, init_manifest: bool = False, d
             # 4) Final safety net: delete by docx_relpath metadata match
             try:
                 rel_norm = rel.replace("\\", "/")
-                db.delete(where={"docx_relpath": rel_norm})
+                db.delete(filter={"docx_relpath": rel_norm})
                 print("<<<<SUCCESS>>>> FILE IS DELETED")
             except Exception:
                 print("<<<<ERROR>>>> FILE WAS NOT DELETED FROM DB!!!")
