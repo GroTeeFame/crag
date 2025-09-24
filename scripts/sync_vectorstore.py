@@ -443,6 +443,34 @@ def run_verify() -> Dict[str, Any]:
         "stale": stale,
     }
 
+def run_prune_stale() -> Dict[str, Any]:
+    """Delete all vectors that do not have a corresponding .docx on disk.
+
+    This bypasses the manifest and compares the vector store content directly
+    with the current filesystem snapshot.
+    """
+    current = scan_docs()
+    expected_groups = set()
+    for rel, info in current.items():
+        gid = compute_attachment_group_id(os.path.join(Config.DOCS_PATH, rel))
+        expected_groups.add(gid)
+
+    present = _collect_vectorstore_group_ids()
+    present_groups = present["groups"]
+
+    stale_gids = [g for g in present_groups if g not in expected_groups]
+
+    from rag_logic import _open_db_for_update
+    db = _open_db_for_update()
+    removed = 0
+    for gid in stale_gids:
+        try:
+            db.delete(where={"attachment_group_id": gid})
+            removed += 1
+        except Exception:
+            pass
+    return {"stale_before": len(stale_gids), "removed": removed}
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -451,6 +479,7 @@ def main():
     ap.add_argument('--init-manifest', action='store_true', help='Write a baseline manifest from current files and exit (no upserts/deletes)')
     ap.add_argument('--verify', action='store_true', help='Verify vector store contains all docs (no changes applied)')
     ap.add_argument('--init-from-db', action='store_true', help='Initialize manifest from existing vector store metadata')
+    ap.add_argument('--prune-stale', action='store_true', help='Remove vectors that no longer have a source file')
     args = ap.parse_args()
 
     if args.init_from_db:
@@ -460,6 +489,10 @@ def main():
     if args.verify:
         v = run_verify()
         print(json.dumps(v, ensure_ascii=False, indent=2))
+        return 0
+    if args.prune_stale:
+        r = run_prune_stale()
+        print(json.dumps(r, ensure_ascii=False, indent=2))
         return 0
     report = run_sync(args.manifest, init_manifest=args.init_manifest, dry_run=args.dry_run)
     if args.init_manifest:
