@@ -1025,28 +1025,35 @@ def api_corpus_delete():
         group_id = _sha256_file(full)
         db = _open_db_for_update()
         # delete content-hash id first
-        if group_id:
+        # Use low-level collection for precise deletes
+        col = db._collection
+        def _del_where(where):
             try:
-                db.delete(filter={"attachment_group_id": group_id})
+                res = col.get(where=where, include=[])
+                ids = res.get("ids", []) if isinstance(res, dict) else []
+                if ids:
+                    col.delete(ids=ids)
             except Exception:
                 pass
+        if group_id:
+            _del_where({"attachment_group_id": group_id})
         # delete legacy ids
         try:
             legacy_gid = hashlib.sha1(os.path.splitext(os.path.basename(full))[0].encode('utf-8')).hexdigest()
-            db.delete(filter={"attachment_group_id": legacy_gid})
+            _del_where({"attachment_group_id": legacy_gid})
         except Exception:
             pass
         try:
             rel = os.path.relpath(full, Config.DOCS_PATH)
             rel_no_ext = os.path.splitext(rel.replace("\\", "/"))[0]
             legacy_path_gid = hashlib.sha1(rel_no_ext.encode('utf-8')).hexdigest()
-            db.delete(filter={"attachment_group_id": legacy_path_gid})
+            _del_where({"attachment_group_id": legacy_path_gid})
         except Exception:
             pass
         # 4) Final safety net: delete by docx_relpath metadata match
         try:
             rel_norm = os.path.relpath(full, Config.DOCS_PATH).replace("\\", "/")
-            db.delete(filter={"docx_relpath": rel_norm})
+            _del_where({"docx_relpath": rel_norm})
         except Exception:
             pass
         # PersistentClient writes to disk automatically; no explicit persist needed

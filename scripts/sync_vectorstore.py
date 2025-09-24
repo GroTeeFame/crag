@@ -224,61 +224,54 @@ def run_sync(manifest_path: Optional[str] = None, init_manifest: bool = False, d
 
     # Deletions
     if deleted:
-        from rag_logic import _open_db_for_update
-        db = _open_db_for_update()
-        for rel in deleted:
-            full = os.path.join(Config.DOCS_PATH, rel)
-            # Prefer manifest-recorded hash (content hash at time of last sync)
-            prev_rec = manifest.get(rel) or {}
-            prev_hash = prev_rec.get('hash')
-            # 1) Delete by previously recorded content-hash if present
-            if prev_hash:
-                try:
-                    db.delete(filter={"attachment_group_id": prev_hash})
-                    print("<<<<SUCCESS>>>> FILE IS DELETED")
-                except Exception:
-                    print("<<<<ERROR>>>> FILE WAS NOT DELETED FROM DB!!!")
-                    pass
-            # 2) Best-effort: compute current group id (falls back to path-based)
+        # Use low-level collection API to fetch ids then delete
+        client = PersistentClient(path=Config.DB_NAME)
+        col = client.get_or_create_collection(name=Config.COLLECTION_NAME)
+
+        def _del_where(where: Dict[str, Any]) -> int:
             try:
-                group_id = compute_attachment_group_id(full)
-                if group_id:
-                    try:
-                        db.delete(filter={"attachment_group_id": group_id})
-                        print("<<<<SUCCESS>>>> FILE IS DELETED")
-                    except Exception:
-                        print("<<<<ERROR>>>> FILE WAS NOT DELETED FROM DB!!!")
-                        pass
+                res = col.get(where=where, include=[])
+                ids = res.get("ids", []) if isinstance(res, dict) else []
+                if ids:
+                    col.delete(ids=ids)
+                    return len(ids)
             except Exception:
                 pass
-            # 3) Legacy ids: stem-based and path-based sha1
+            return 0
+
+        for rel in deleted:
+            full = os.path.join(Config.DOCS_PATH, rel)
+            removed = 0
+            # Manifest recorded content hash
+            prev_rec = manifest.get(rel) or {}
+            prev_hash = prev_rec.get('hash')
+            if prev_hash:
+                removed += _del_where({"attachment_group_id": prev_hash})
+            # Current group id (if still accessible)
+            try:
+                gid = compute_attachment_group_id(full)
+                if gid:
+                    removed += _del_where({"attachment_group_id": gid})
+            except Exception:
+                pass
+            # Legacy ids
             try:
                 import hashlib
                 legacy_gid = hashlib.sha1(os.path.splitext(os.path.basename(full))[0].encode('utf-8')).hexdigest()
-                db.delete(filter={"attachment_group_id": legacy_gid})
-                print("<<<<SUCCESS>>>> FILE IS DELETED")
+                removed += _del_where({"attachment_group_id": legacy_gid})
             except Exception:
-                print("<<<<ERROR>>>> FILE WAS NOT DELETED FROM DB!!!")
                 pass
             try:
                 rel_no_ext = os.path.splitext(rel.replace("\\", "/"))[0]
                 legacy_path_gid = hashlib.sha1(rel_no_ext.encode('utf-8')).hexdigest()
-                db.delete(filter={"attachment_group_id": legacy_path_gid})
-                print("<<<<SUCCESS>>>> FILE IS DELETED")
+                removed += _del_where({"attachment_group_id": legacy_path_gid})
             except Exception:
-                print("<<<<ERROR>>>> FILE WAS NOT DELETED FROM DB!!!")
                 pass
-            # 4) Final safety net: delete by docx_relpath metadata match
-            try:
-                rel_norm = rel.replace("\\", "/")
-                db.delete(filter={"docx_relpath": rel_norm})
-                print("<<<<SUCCESS>>>> FILE IS DELETED")
-            except Exception:
-                print("<<<<ERROR>>>> FILE WAS NOT DELETED FROM DB!!!")
-                pass
-            # Finally drop manifest entry
+            # Final safety net: by docx_relpath
+            removed += _del_where({"docx_relpath": rel.replace("\\", "/")})
+            print(f"Deleted {removed} chunk ids for {rel}")
+            # Drop manifest entry
             manifest.pop(rel, None)
-        # PersistentClient writes to disk automatically; no explicit persist needed
         report['applied_deletes'] = len(deleted)
 
     save_manifest(manifest_path, manifest)
