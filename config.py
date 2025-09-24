@@ -41,7 +41,8 @@ class Config:
     EMBEDDING_MODEL = "text-embedding-3-large"
 
     DB_DIR = "vectorstore"
-    NAME_FOR_DB = "VND_documents_100925_v1_1"
+    # NAME_FOR_DB = "VND_documents_100925_v1_1"
+    NAME_FOR_DB = "VND_documents_230925_v1"
     DB_NAME = f"{DB_DIR}/{NAME_FOR_DB}"
 
     LOGIN = "ADMIN"

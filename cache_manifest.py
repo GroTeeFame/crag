@@ -63,3 +63,20 @@ def cache_store(input_hash: str, output_path: str, meta: Optional[Dict[str, Any]
     }
     _save(data)
 
+
+def cache_prune_missing(path: str = MANIFEST_PATH) -> Dict[str, Any]:
+    """Remove entries whose output file no longer exists.
+
+    Returns a small report: {"removed": n, "left": m}.
+    """
+    data = _load(path)
+    removed = 0
+    keys = list(data.keys())
+    for k in keys:
+        rec = data.get(k) or {}
+        out = rec.get("output_path")
+        if not out or not os.path.exists(out):
+            data.pop(k, None)
+            removed += 1
+    _save(data, path)
+    return {"removed": removed, "left": len(data)}

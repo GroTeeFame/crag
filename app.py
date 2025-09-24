@@ -52,7 +52,7 @@ from rag_functions import (
     rrf_fuse, build_bm25_retriever, pack_context, cap_per_ird,
     build_packed_context, source_label_from_meta
 )
-from cache_manifest import cache_lookup
+from cache_manifest import cache_lookup, cache_store, sha256_file, cache_prune_missing
 
 from openai import RateLimitError
 try:
@@ -136,6 +136,11 @@ def _ensure_runtime_directories():
         logging.warning(f"Failed to ensure runtime directories: {e}")
 
 _ensure_runtime_directories()
+# Best-effort: prune stale processed-manifest entries at startup
+try:
+    cache_prune_missing()
+except Exception:
+    pass
 
 # Rate limiting (choose storage via Config; supports Redis or memory)
 limiter = Limiter(get_remote_address, app=app, storage_uri=getattr(Config, "LIMITER_STORAGE_URI", "memory://"))
@@ -1038,6 +1043,12 @@ def api_corpus_delete():
             db.delete(where={"attachment_group_id": legacy_path_gid})
         except Exception:
             pass
+        # 4) Final safety net: delete by docx_relpath metadata match
+        try:
+            rel_norm = os.path.relpath(full, Config.DOCS_PATH).replace("\\", "/")
+            db.delete(where={"docx_relpath": rel_norm})
+        except Exception:
+            pass
         # PersistentClient writes to disk automatically; no explicit persist needed
     except Exception:
         pass
@@ -1299,6 +1310,14 @@ def _process_document_task(task_id: str):
         out_path = task["filename_out"]
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         doc.save(out_path)
+
+        # Record processed file mapping for historical dedup
+        try:
+            ihash = sha256_file(task.get("filename_in", ""))
+            if ihash:
+                cache_store(ihash, out_path, meta={"task_id": task_id})
+        except Exception:
+            pass
 
         task_merge(task_id, {"status": "done", "finished_at": time.time()})
         task_push_event(task_id, _task_snapshot(task_id))

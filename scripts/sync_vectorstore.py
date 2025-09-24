@@ -260,6 +260,12 @@ def run_sync(manifest_path: Optional[str] = None, init_manifest: bool = False, d
                 db.delete(where={"attachment_group_id": legacy_path_gid})
             except Exception:
                 pass
+            # 4) Final safety net: delete by docx_relpath metadata match
+            try:
+                rel_norm = rel.replace("\\", "/")
+                db.delete(where={"docx_relpath": rel_norm})
+            except Exception:
+                pass
             # Finally drop manifest entry
             manifest.pop(rel, None)
         # PersistentClient writes to disk automatically; no explicit persist needed
