@@ -151,6 +151,11 @@ def run_sync(manifest_path: Optional[str] = None, init_manifest: bool = False, d
         'dry_run': bool,
       }
     """
+    # print("FUNC -> run_sync()")
+    # print("PARA -> run_sync()")
+    # print(f"manifest_path : {manifest_path}")
+    # print(f"init_manifest : {init_manifest}")
+    # print(f"dry_run : {dry_run}")
     if not manifest_path:
         manifest_path = _default_manifest_path()
 
@@ -166,6 +171,7 @@ def run_sync(manifest_path: Optional[str] = None, init_manifest: bool = False, d
     }
 
     manifest = load_manifest(manifest_path)
+    # print(f"Manifest: {manifest}")
     current = scan_docs()
     report['scanned'] = len(current)
 
@@ -203,6 +209,26 @@ def run_sync(manifest_path: Optional[str] = None, init_manifest: bool = False, d
                 new_or_changed.append(rel)
         else:
             cur['hash'] = prev.get('hash')
+
+    # Also include files whose content-hash is NOT present in the vector store,
+    # even if the manifest says they are up-to-date (e.g., after a manifest-only init).
+    try:
+        present = _collect_vectorstore_group_ids()
+        present_groups = present.get('groups', set())
+    except Exception:
+        present_groups = set()
+
+    for rel in candidates:
+        if rel in new_or_changed:
+            continue
+        cur = current[rel]
+        # ensure we have a hash for this file
+        h = cur.get('hash')
+        if not h:
+            h = sha256_file(cur['path'])
+            cur['hash'] = h
+        if h and h not in present_groups:
+            new_or_changed.append(rel)
 
     report['new_or_changed'] = new_or_changed
     report['deleted'] = deleted

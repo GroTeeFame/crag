@@ -124,36 +124,83 @@
     {% if not logged_in %}
       <div class="text-slate-600">Потрібен вхід, щоб керувати документами. <a class="text-sky-600 hover:underline" href="{{ url_for('login') }}">Увійти</a></div>
     {% else %}
-    <div class="flex items-center gap-3 flex-wrap">
-      <form id="corpus-upload-form" class="flex items-center gap-2">
-        <input id="corpus-rel-dir" type="hidden" />
-        <span class="text-sm text-slate-600">Папка призначення: <span id="corpus-selected" class="font-medium">/</span></span>
-        <input id="corpus-file" type="file" accept=".docx" class="hidden" />
-        <button id="corpus-pick" type="button" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50">Оберіть .docx</button>
-        <span id="corpus-chosen" class="text-sm text-slate-500"></span>
-        <button class="bg-sky-600 text-white px-3 py-1.5 rounded hover:bg-sky-700" type="submit">Завантажити сюди</button>
-      </form>
-      <div class="flex items-center gap-2">
-        <button id="select-root" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50" title="Вибрати кореневу папку">Вибрати /</button>
-        <input id="mkdir-name" type="text" placeholder="Нова папка" class="border border-slate-300 rounded px-2 py-1 text-sm" />
-        <button id="mkdir-btn" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50">Створити</button>
-        <button id="rmdir-btn" class="border border-red-300 text-red-700 px-3 py-1.5 rounded hover:bg-red-50">Видалити папку</button>
-        <button id="collapse-all" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50">Згорнути все</button>
+    <div id="controls-row" class="flex flex-col gap-4">
+      <!-- Upload card -->
+      <div id="upload-card" class="border border-slate-200 rounded-lg p-3 bg-white shadow-sm w-full">
+        <div class="flex items-center justify-between cs-card-header">
+          <div class="text-sm font-medium">Завантаження документа</div>
+          <button id="toggle-upload" class="text-xs text-slate-600 border border-slate-300 px-2 py-1 rounded hover:bg-slate-50">Згорнути</button>
+        </div>
+        <div id="upload-body">
+          <form id="corpus-upload-form" class="flex items-center gap-2 flex-wrap">
+            <input id="corpus-rel-dir" type="hidden" />
+            <span class="text-sm text-slate-600 min-w-0">Папка: <span id="corpus-selected" class="font-medium break-words">/</span></span>
+            <input id="corpus-file" type="file" accept=".docx" class="hidden" />
+            <button id="corpus-pick" type="button" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50">Оберіть .docx</button>
+            <span id="corpus-chosen" class="text-sm text-slate-500 break-words max-w-full"></span>
+            <button class="bg-sky-600 text-white px-3 py-1.5 rounded hover:bg-sky-700" type="submit">Завантажити</button>
+          </form>
+        </div>
       </div>
-      <div class="flex items-center gap-2">
-        <label class="text-sm text-slate-600 flex items-center gap-2">
-          Показ джерела:
-          <select id="source-label-mode" class="border border-slate-300 rounded px-2 py-1 text-sm">
-            <option value="filename">Назва файлу</option>
-            <option value="docx_relpath">Шлях (docx_relpath)</option>
-          </select>
-        </label>
-        <button id="sync-vs" class="border border-emerald-300 text-emerald-700 px-3 py-1.5 rounded hover:bg-emerald-50">Синхронізувати</button>
-        <button id="corpus-refresh" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50">Оновити</button>
+
+      <!-- Folder actions card -->
+      <div id="folders-card" class="border border-slate-200 rounded-lg p-3 bg-white shadow-sm w-full">
+        <div class="flex items-center justify-between cs-card-header">
+          <div class="text-sm font-medium">Керування папками</div>
+          <button id="toggle-folders" class="text-xs text-slate-600 border border-slate-300 px-2 py-1 rounded hover:bg-slate-50">Згорнути</button>
+        </div>
+        <div id="folders-body">
+          <div class="flex items-center gap-2 flex-wrap">
+            <button id="select-root" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50" title="Вибрати кореневу папку">Вибрати /</button>
+            <input id="mkdir-name" type="text" placeholder="Нова папка" class="border border-slate-300 rounded px-2 py-1 text-sm min-w-[12rem]" />
+            <button id="mkdir-btn" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50">Створити</button>
+            <button id="rmdir-btn" class="border border-red-300 text-red-700 px-3 py-1.5 rounded hover:bg-red-50">Видалити</button>
+            <button id="collapse-all" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50">Згорнути все</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings card -->
+      <div id="settings-card" class="border border-slate-200 rounded-lg p-3 bg-white shadow-sm w-full">
+        <div class="flex items-center justify-between cs-card-header">
+          <div class="text-sm font-medium">Налаштування</div>
+          <button id="toggle-settings" class="text-xs text-slate-600 border border-slate-300 px-2 py-1 rounded hover:bg-slate-50">Згорнути</button>
+        </div>
+        <div id="settings-body">
+          <label class="text-sm text-slate-600 flex items-center gap-2">
+            Показ джерела:
+            <select id="source-label-mode" class="border border-slate-300 rounded px-2 py-1 text-sm">
+              <option value="filename">Назва файлу</option>
+              <option value="docx_relpath">Шлях (docx_relpath)</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <!-- Vector store actions card -->
+      <div id="vs-card" class="border border-slate-200 rounded-lg p-3 bg-white shadow-sm w-full">
+        <div class="flex items-center justify-between cs-card-header">
+          <div class="text-sm font-medium">Синхронізація векторного сховища</div>
+          <button id="toggle-vs" class="text-xs text-slate-600 border border-slate-300 px-2 py-1 rounded hover:bg-slate-50">Згорнути</button>
+        </div>
+        <div id="vs-body">
+          <div class="flex items-center gap-2 flex-wrap">
+            <button id="sync-vs" class="border border-emerald-300 text-emerald-700 px-3 py-1.5 rounded hover:bg-emerald-50">Синхронізувати</button>
+            <button id="verify-vs" class="border border-blue-300 text-blue-700 px-3 py-1.5 rounded hover:bg-blue-50">Перевірити</button>
+            <button id="initdb-vs" class="border border-violet-300 text-violet-700 px-3 py-1.5 rounded hover:bg-violet-50">Init from DB</button>
+            <button id="dryrun-vs" class="border border-amber-300 text-amber-700 px-3 py-1.5 rounded hover:bg-amber-50">Dry‑run</button>
+            <button id="prune-vs" class="border border-rose-300 text-rose-700 px-3 py-1.5 rounded hover:bg-rose-50">Очистити зайве</button>
+            <button id="corpus-refresh" class="border border-slate-300 text-slate-700 px-3 py-1.5 rounded hover:bg-slate-50">Оновити</button>
+          </div>
+          <div class="mt-4">
+            <div class="text-sm text-slate-600 mb-1">Звіт синхронізації</div>
+            <pre id="corpus-report" class="bg-slate-50 border border-slate-200 rounded p-3 text-xs overflow-x-auto overflow-y-auto max-h-72 break-words"></pre>
+          </div>
+        </div>
       </div>
     </div>
 
-    <div id="corpus-tree" class="text-sm"></div>
+    <div id="corpus-tree" class="text-sm break-words mt-4 border border-slate-200 rounded-lg p-3 bg-white shadow-sm overflow-x-auto"></div>
     {% endif %}
   </div>
 </section>
@@ -547,6 +594,210 @@ uploadForm.addEventListener('submit', async (e) => {
   const collapseAllBtn = document.getElementById('collapse-all');
   const selectRootBtn = document.getElementById('select-root');
   const syncBtn = document.getElementById('sync-vs');
+  const verifyBtn = document.getElementById('verify-vs');
+  const initDbBtn = document.getElementById('initdb-vs');
+  const dryrunBtn = document.getElementById('dryrun-vs');
+  const pruneBtn = document.getElementById('prune-vs');
+  const corpusReport = document.getElementById('corpus-report');
+  // per-card collapses (no forced fixed positioning)
+  function initCollapse(bodyId, btnId, lsKey) {
+    const body = document.getElementById(bodyId);
+    const btn = document.getElementById(btnId);
+
+    if (!body || !btn) return;
+    
+    function setCollapsed(collapsed) {
+      if (collapsed) { body.classList.add('hidden'); btn.textContent = 'Розгорнути'; }
+      else { body.classList.remove('hidden'); btn.textContent = 'Згорнути'; }
+    }
+    try { const v = localStorage.getItem(lsKey); setCollapsed(v === '1'); } catch (_) {}
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const collapsed = body.classList.contains('hidden');
+      setCollapsed(!collapsed);
+      try { localStorage.setItem(lsKey, (!collapsed) ? '1' : '0'); } catch (_) {}
+    });
+  }
+  initCollapse('upload-body','toggle-upload','crag_collapse_upload');
+  initCollapse('folders-body','toggle-folders','crag_collapse_folders');
+  initCollapse('settings-body','toggle-settings','crag_collapse_settings');
+  initCollapse('vs-body','toggle-vs','crag_collapse_vs');
+
+  // Sticky headers: stack so multiple stick without overlapping
+  (function initStickyStacking() {
+    const container = document.getElementById('tab-corpus');
+    if (!container) return;
+    const headers = Array.from(container.querySelectorAll('.cs-sticky'));
+    if (!headers.length) return;
+
+    const BASE_TOP = 80; // Keep in sync with CSS
+    function recompute() {
+      let acc = 0;
+      // Highest z-index for the earliest card when pinned
+      const zTop = 100;
+      for (let i = 0; i < headers.length; i++) {
+        const h = headers[i];
+        const card = h.closest('#upload-card, #folders-card, #settings-card, #vs-card') || h.parentElement;
+        const threshold = BASE_TOP + acc;
+        h.style.top = threshold + 'px';
+
+        const rect = (card || h).getBoundingClientRect();
+        const isPinned = rect.top <= threshold;
+        if (isPinned) {
+          acc += h.offsetHeight || 0;
+          h.style.zIndex = String(zTop - i);
+        } else {
+          h.style.zIndex = '40';
+        }
+      }
+    }
+
+    // Run once and on scroll/resize
+    recompute();
+    window.addEventListener('scroll', recompute, { passive: true });
+    window.addEventListener('resize', recompute);
+    // Recompute after collapse toggles
+    ['toggle-upload','toggle-folders','toggle-settings','toggle-vs'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', () => setTimeout(recompute, 0));
+    });
+    // Recompute when switching to corpus tab
+    const corpusTabBtn = Array.from(document.querySelectorAll('#tabs [data-tab="corpus"]'))[0];
+    if (corpusTabBtn) corpusTabBtn.addEventListener('click', () => setTimeout(recompute, 0));
+  })();
+
+  // Full-card sticky behavior: cards stick at page top after passing it, with stacking and usable scrolling
+  (function initCardSticky() {
+    const BASE_TOP = 0; // distance from viewport top for pinned card
+    const PIN_GAP = 8;  // small gap between pinned card and the next card as it pushes
+    const cards = [
+      {
+        el: document.getElementById('upload-card'),
+        body: document.getElementById('upload-body'),
+        header: document.querySelector('#upload-card .cs-card-header')
+      },
+      {
+        el: document.getElementById('folders-card'),
+        body: document.getElementById('folders-body'),
+        header: document.querySelector('#folders-card .cs-card-header')
+      },
+      {
+        el: document.getElementById('settings-card'),
+        body: document.getElementById('settings-body'),
+        header: document.querySelector('#settings-card .cs-card-header')
+      },
+      {
+        el: document.getElementById('vs-card'),
+        body: document.getElementById('vs-body'),
+        header: document.querySelector('#vs-card .cs-card-header')
+      }
+    ].filter(c => c.el);
+
+    if (!cards.length) return;
+
+    function ensureSpacer(card) {
+      if (!card.spacer) {
+        const r = card.el.getBoundingClientRect();
+        const spacer = document.createElement('div');
+        spacer.style.height = r.height + 'px';
+        spacer.style.width = '100%';
+        // Preserve vertical rhythm if card had margins (most likely 0 due to flex gap)
+        spacer.style.margin = getComputedStyle(card.el).margin;
+        card.el.insertAdjacentElement('afterend', spacer);
+        card.spacer = spacer;
+      }
+    }
+    function removeSpacer(card) {
+      if (card.spacer) { card.spacer.remove(); card.spacer = null; }
+    }
+
+    function pinCard(card, top, z) {
+      ensureSpacer(card);
+      const anchor = card.spacer || card.el;
+      const rect = anchor.getBoundingClientRect();
+      card.el.style.position = 'fixed';
+      card.el.style.top = top + 'px';
+      card.el.style.left = (rect.left + window.scrollX) + 'px';
+      card.el.style.width = rect.width + 'px';
+      card.el.style.zIndex = String(z);
+      card.el.style.margin = '0';
+      card.el.style.transform = 'translateY(0)';
+      card.el.classList.add('cs-shadow');
+      // Make the body scrollable within the viewport area
+      if (card.body) {
+        const headerH = card.header ? card.header.offsetHeight : 0;
+        const avail = Math.max(120, window.innerHeight - top - 12);
+        card.body.style.maxHeight = Math.max(80, avail - headerH) + 'px';
+        card.body.style.overflowY = 'auto';
+      }
+      card.pinned = true;
+    }
+    function unpinCard(card) {
+      card.el.style.position = '';
+      card.el.style.top = '';
+      card.el.style.left = '';
+      card.el.style.width = '';
+      card.el.style.zIndex = '';
+      card.el.classList.remove('cs-shadow');
+      if (card.body) {
+        card.body.style.maxHeight = '';
+        card.body.style.overflowY = '';
+      }
+      card.el.style.margin = '';
+      card.el.style.transform = '';
+      removeSpacer(card);
+      card.pinned = false;
+    }
+
+    function recompute() {
+      // Only expanded cards can stick
+      const expanded = cards.filter(c => c.body && !c.body.classList.contains('hidden'));
+
+      // Unpin collapsed cards immediately
+      for (const c of cards) {
+        if (!expanded.includes(c)) unpinCard(c);
+      }
+
+      // Stack multiple expanded cards after passing the top threshold
+      let stackTop = BASE_TOP;
+      let zTop = 300; // ensure pinned cards are above other content
+      const pinnedNow = new Set();
+
+      for (const c of expanded) {
+        const anchorTop = (c.spacer ? c.spacer.getBoundingClientRect().top : c.el.getBoundingClientRect().top);
+        if (anchorTop <= stackTop) {
+          // Pin at current stack position
+          pinCard(c, stackTop, zTop);
+          pinnedNow.add(c);
+          // Keep spacer in sync with actual pinned height
+          const h = c.el.getBoundingClientRect().height;
+          if (c.spacer) c.spacer.style.height = h + 'px';
+          // Advance stack for next expanded card
+          stackTop += h + PIN_GAP;
+          zTop -= 1;
+        } else {
+          // Not yet at the stack threshold – ensure it's not pinned
+          unpinCard(c);
+        }
+      }
+
+      // Unpin any expanded card that is not in the pinned set
+      for (const c of expanded) {
+        if (!pinnedNow.has(c)) unpinCard(c);
+      }
+    }
+
+    // Wire events
+    recompute();
+    window.addEventListener('scroll', recompute, { passive: true });
+    window.addEventListener('resize', recompute);
+    ;['toggle-upload','toggle-folders','toggle-settings','toggle-vs'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', () => setTimeout(recompute, 0));
+    });
+    const corpusBtn = Array.from(document.querySelectorAll('#tabs [data-tab="corpus"]'))[0];
+    if (corpusBtn) corpusBtn.addEventListener('click', () => setTimeout(recompute, 0));
+  })();
   const sourceLabelSel = document.getElementById('source-label-mode');
 
   let collapsed = new Set();
@@ -766,6 +1017,7 @@ uploadForm.addEventListener('submit', async (e) => {
       const r = await fetch('/api/corpus/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'apply' }) });
       const j = await r.json();
       if (!j.ok) alert('Синхронізація не вдалася: ' + (j.error || '')); else alert('Синхронізація завершена');
+      if (corpusReport) corpusReport.textContent = JSON.stringify(j, null, 2);
       loadCorpus();
     } catch (err) {
       alert('Синхронізація не вдалася');
@@ -774,6 +1026,91 @@ uploadForm.addEventListener('submit', async (e) => {
       syncBtn.textContent = prevText;
     }
   });
+
+  verifyBtn?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const prev = verifyBtn.textContent;
+    verifyBtn.textContent = 'Перевіряю…';
+    verifyBtn.setAttribute('disabled', 'disabled');
+    try {
+      const r = await fetch('/api/corpus/verify');
+      const j = await r.json();
+      if (corpusReport) corpusReport.textContent = JSON.stringify(j, null, 2);
+    } catch (e) { alert('Помилка перевірки'); }
+    finally { verifyBtn.textContent = prev; verifyBtn.removeAttribute('disabled'); }
+  });
+
+  dryrunBtn?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const prev = dryrunBtn.textContent;
+    dryrunBtn.textContent = 'Dry‑run…';
+    dryrunBtn.setAttribute('disabled', 'disabled');
+    try {
+      const r = await fetch('/api/corpus/sync', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ mode: 'dry' })});
+      const j = await r.json();
+      if (corpusReport) corpusReport.textContent = JSON.stringify(j, null, 2);
+    } catch (e) { alert('Помилка dry‑run'); }
+    finally { dryrunBtn.textContent = prev; dryrunBtn.removeAttribute('disabled'); }
+  });
+
+  initDbBtn?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const prev = initDbBtn.textContent;
+    initDbBtn.textContent = 'Ініціалізація…';
+    initDbBtn.setAttribute('disabled', 'disabled');
+    try {
+      const r = await fetch('/api/corpus/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'init_db' })
+      });
+      const j = await r.json();
+      if (!j.ok) alert('Init from DB не вдалося: ' + (j.error || ''));
+      if (corpusReport) corpusReport.textContent = JSON.stringify(j, null, 2);
+    } catch (e) { alert('Помилка init from DB'); }
+    finally { initDbBtn.textContent = prev; initDbBtn.removeAttribute('disabled'); }
+  });
+
+  pruneBtn?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const prev = pruneBtn.textContent;
+    pruneBtn.textContent = 'Очищення…';
+    pruneBtn.setAttribute('disabled', 'disabled');
+    try {
+      const r = await fetch('/api/corpus/prune', { method: 'POST' });
+      const j = await r.json();
+      if (!j.ok) alert('Очищення не вдалося: ' + (j.error || ''));
+      if (corpusReport) corpusReport.textContent = JSON.stringify(j, null, 2);
+    } catch (e) { alert('Помилка очищення'); }
+    finally { pruneBtn.textContent = prev; pruneBtn.removeAttribute('disabled'); }
+  });
+
+  // Controls collapse/expand with localStorage persistence
+  (function initControlsCollapse() {
+    const LS_KEY = 'crag_controls_collapsed';
+    function setCollapsed(collapsed) {
+      if (!controlsGrid || !toggleControls) return;
+      if (collapsed) {
+        controlsGrid.classList.add('hidden');
+        toggleControls.textContent = 'Розгорнути панель';
+      } else {
+        controlsGrid.classList.remove('hidden');
+        toggleControls.textContent = 'Згорнути панель';
+      }
+    }
+    // restore state
+    try {
+      const v = localStorage.getItem(LS_KEY);
+      setCollapsed(v === '1');
+    } catch (_) {}
+    // toggle handler
+    toggleControls?.addEventListener('click', (e) => {
+      e.preventDefault();
+      const collapsed = controlsGrid?.classList.contains('hidden');
+      setCollapsed(!collapsed);
+      try { localStorage.setItem(LS_KEY, (!collapsed) ? '1' : '0'); } catch (_) {}
+    });
+  })();
 
   // Initialize source label selector from server
   (async function initSourceLabel() {

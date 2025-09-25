@@ -1349,9 +1349,8 @@ def api_corpus_sync():
     try:
         from scripts.sync_vectorstore import run_sync, _default_manifest_path, run_init_from_db
         manifest = _default_manifest_path()
-        # If manifest is missing and caller requested apply, do a safe init instead
-        if not os.path.exists(manifest) and not init and not dry and mode != 'init_db':
-            init = True
+        # Do not auto-init the manifest on 'apply'; allow full embed to proceed
+        # Caller can explicitly request 'init' or 'init_db' when desired.
         if mode == 'init_db':
             report = run_init_from_db(manifest_path=manifest)
             status = 'initialized_from_db'
@@ -1369,6 +1368,21 @@ def api_corpus_verify():
     try:
         from scripts.sync_vectorstore import run_verify
         report = run_verify()
+        return jsonify({"ok": True, "report": report})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/corpus/prune")
+@limiter.limit("5/minute")
+def api_corpus_prune():
+    """Remove vectors for docs that are no longer present on disk.
+
+    Returns: { ok: True, report: { stale_before, removed } }
+    """
+    try:
+        from scripts.sync_vectorstore import run_prune_stale
+        report = run_prune_stale()
         return jsonify({"ok": True, "report": report})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500

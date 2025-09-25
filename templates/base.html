@@ -6,6 +6,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <!-- Local Tailwind build -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/tailwind.css') }}" />
+  <style>
+    /* Sticky header for controls/cards; avoids jump-on-expand and overlays */
+    .cs-sticky {
+      position: sticky;
+      top: 80px; /* keep below app header */
+      z-index: 40;
+      background: white; /* prevent bleed-through when sticking */
+    }
+    .cs-sticky-card { position: sticky; top: 40px; z-index: 50; }
+    .cs-fixed { position: fixed !important; }
+    .cs-shadow { box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+  </style>
 </head>
 <body class="bg-slate-50 text-slate-900 h-screen">
   <div class="max-w-5xl mx-auto py-6 px-4 h-full flex flex-col">
