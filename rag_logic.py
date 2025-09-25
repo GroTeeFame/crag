@@ -378,24 +378,41 @@ def upsert_ird_document(docx_path: str, db: Optional[Chroma] = None) -> None:
     # Open DB and replace this IRD's vectors (reuse provided db if any)
     if db is None:
         db = _open_db_for_update()
-    # Also try legacy ids deletion to avoid stale duplicates during migration
+    # Use low-level collection deletion for reliability
+    col = db._collection
+    def _del_where(where: Dict[str, Any]) -> int:
         try:
-            legacy_gid = hashlib.sha1(base_stem.encode("utf-8")).hexdigest()
-            try:
-                db.delete(filter={"attachment_group_id": legacy_gid})
-            except Exception:
-                pass
-            # And legacy path-based id
-            try:
-                rel_docx = os.path.relpath(docx_path, Config.DOCS_PATH)
-                rel_no_ext = os.path.splitext(rel_docx.replace("\\", "/"))[0]
-                legacy_path_gid = hashlib.sha1(rel_no_ext.encode("utf-8")).hexdigest()
-                db.delete(filter={"attachment_group_id": legacy_path_gid})
-            except Exception:
-                pass
-            db.delete(filter={"attachment_group_id": group_id})
-        except Exception as e:
-            print(f"ℹ️ Delete by attachment_group_id failed or nothing to delete: {e}")
+            res = col.get(where=where, include=[])
+            ids = res.get("ids", []) if isinstance(res, dict) else []
+            if ids:
+                col.delete(ids=ids)
+                return len(ids)
+        except Exception:
+            pass
+        return 0
+    # Delete current and legacy ids to avoid duplicates during migration
+    try:
+        removed = 0
+        legacy_gid = hashlib.sha1(base_stem.encode("utf-8")).hexdigest()
+        removed += _del_where({"attachment_group_id": legacy_gid})
+        try:
+            rel_docx = os.path.relpath(docx_path, Config.DOCS_PATH)
+            rel_no_ext = os.path.splitext(rel_docx.replace("\\", "/"))[0]
+            legacy_path_gid = hashlib.sha1(rel_no_ext.encode("utf-8")).hexdigest()
+            removed += _del_where({"attachment_group_id": legacy_path_gid})
+        except Exception:
+            pass
+        removed += _del_where({"attachment_group_id": group_id})
+        # Also delete by docx_relpath for safety
+        try:
+            rel_norm = os.path.relpath(docx_path, Config.DOCS_PATH).replace("\\", "/")
+            removed += _del_where({"docx_relpath": rel_norm})
+        except Exception:
+            pass
+        if DEBUG and removed:
+            print(f"Removed {removed} stale chunks for {docx_path}")
+    except Exception:
+        pass
 
     # Deterministic ids per chunk to avoid duplicates
     ids = []
