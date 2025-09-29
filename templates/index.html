@@ -813,6 +813,8 @@ uploadForm.addEventListener('submit', async (e) => {
     selectedDir = dir;
     corpusRelDir.value = dir;
     corpusSelected.textContent = dir ? dir : '/';
+    // Persist selected directory for future reloads
+    try { localStorage.setItem(LS_SELECTED_KEY, dir); } catch {}
     // Highlight selected folder label elements
     corpusTree.querySelectorAll('[data-folder]').forEach(el => {
       const p = el.getAttribute('data-folder') || '';
@@ -895,25 +897,53 @@ uploadForm.addEventListener('submit', async (e) => {
   }
 
   // Minimal, indented tree with native triangles via <details>/<summary>
-  let expandAll = true;
+  // Persist open folders and selected folder in localStorage
+  const LS_OPEN_KEY = 'crag_corpus_open_set';
+  const LS_SELECTED_KEY = 'crag_corpus_selected_dir';
 
-  function renderTree2(node, basePath='', level=0) {
+  function loadOpenSet() {
+    try {
+      const raw = localStorage.getItem(LS_OPEN_KEY);
+      if (!raw) return new Set();
+      const arr = JSON.parse(raw);
+      return new Set(Array.isArray(arr) ? arr : []);
+    } catch { return new Set(); }
+  }
+  function saveOpenSet(set) {
+    try { localStorage.setItem(LS_OPEN_KEY, JSON.stringify(Array.from(set))); } catch {}
+  }
+  function isOpenPath(openSet, path) {
+    return openSet.has(path || '');
+  }
+  function setPathOpen(openSet, path, open) {
+    if (!path && path !== '') return openSet;
+    if (open) openSet.add(path); else openSet.delete(path);
+    saveOpenSet(openSet);
+    return openSet;
+  }
+
+  function renderTree2(node, basePath='', level=0, openSet = loadOpenSet()) {
     const container = document.createElement('div');
     const folders = Object.keys(node).filter(k => k !== '$files').sort();
     for (const name of folders) {
       const path = basePath ? `${basePath}/${name}` : name;
       const details = document.createElement('details');
-      if (expandAll) {
-        details.setAttribute('open', '');
-      }
+      // Restore persisted open state for this folder
+      if (isOpenPath(openSet, path)) details.setAttribute('open', '');
       const summary = document.createElement('summary');
       summary.setAttribute('data-folder', path);
       summary.className = 'cursor-pointer font-medium text-slate-700';
       summary.style.paddingLeft = `${level * 16}px`;
       summary.textContent = `${name}/`;
       details.appendChild(summary);
-      const child = renderTree2(node[name], path, level + 1);
+      const child = renderTree2(node[name], path, level + 1, openSet);
       details.appendChild(child);
+      // Persist open/closed on toggle
+      details.addEventListener('toggle', () => {
+        const nowOpen = details.open;
+        const os = loadOpenSet();
+        setPathOpen(os, path, nowOpen);
+      });
       container.appendChild(details);
     }
     if (node['$files']) {
@@ -952,7 +982,7 @@ uploadForm.addEventListener('submit', async (e) => {
       const rows = j.results || [];
       const tree = buildTree(rows);
       corpusTree.innerHTML = '';
-      const dom = renderTree2(tree, '', 0);
+      const dom = renderTree2(tree, '', 0, loadOpenSet());
       corpusTree.appendChild(dom);
       // wire events
       corpusTree.querySelectorAll('button.toggle').forEach(btn => {
@@ -988,8 +1018,16 @@ uploadForm.addEventListener('submit', async (e) => {
           } catch { alert('Помилка видалення'); }
         });
       });
-      // default select root if none
+      // default select last selected dir if available, else root
+      try {
+        const prevSel = localStorage.getItem(LS_SELECTED_KEY);
+        if (selectedDir === '' && prevSel !== null) ensureSelected(prevSel);
+      } catch (_) {}
       if (selectedDir === '') ensureSelected('');
+
+      // Update collapse-all button label based on current state
+      const anyOpen = !!corpusTree.querySelector('details[open]');
+      if (collapseAllBtn) collapseAllBtn.textContent = anyOpen ? 'Згорнути все' : 'Розгорнути все';
     } catch (e) {
       corpusTree.innerHTML = '<div class="text-red-600">Не вдалося завантажити список</div>';
     }
@@ -999,8 +1037,24 @@ uploadForm.addEventListener('submit', async (e) => {
 
   collapseAllBtn?.addEventListener('click', (e) => {
     e.preventDefault();
-    expandAll = false;
-    loadCorpus();
+    // Toggle: if any folder is open -> collapse all; else expand all
+    const details = Array.from(corpusTree.querySelectorAll('details'));
+    const anyOpen = details.some(d => d.open);
+    if (anyOpen) {
+      details.forEach(d => { d.open = false; });
+      try { localStorage.removeItem(LS_OPEN_KEY); } catch {}
+      if (collapseAllBtn) collapseAllBtn.textContent = 'Розгорнути все';
+    } else {
+      details.forEach(d => { d.open = true; });
+      // Persist: collect all folder paths
+      const set = new Set();
+      corpusTree.querySelectorAll('summary[data-folder]').forEach(s => {
+        const p = s.getAttribute('data-folder') || '';
+        set.add(p);
+      });
+      saveOpenSet(set);
+      if (collapseAllBtn) collapseAllBtn.textContent = 'Згорнути все';
+    }
   });
 
   selectRootBtn?.addEventListener('click', (e) => {
