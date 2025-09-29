@@ -1087,6 +1087,9 @@ uploadForm.addEventListener('submit', async (e) => {
 
   // Controls collapse/expand with localStorage persistence
   (function initControlsCollapse() {
+    // Gracefully handle absence of toggle controls in markup
+    const controlsGrid = document.getElementById('controls-row');
+    const toggleControls = document.getElementById('toggle-controls');
     const LS_KEY = 'crag_controls_collapsed';
     function setCollapsed(collapsed) {
       if (!controlsGrid || !toggleControls) return;
