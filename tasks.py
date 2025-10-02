@@ -69,6 +69,45 @@ def _redis():
     return redis.from_url(Config.REDIS_URL, decode_responses=True)
 
 
+def _task_snapshot(r: redis.Redis, task_id: str) -> Optional[Dict[str, Any]]:
+    h = r.hgetall(_task_key(task_id))
+    if not h:
+        return None
+    def as_int(x):
+        try:
+            return int(x)
+        except Exception:
+            return 0
+    return {
+        "task_id": task_id,
+        "status": h.get("status"),
+        "total": as_int(h.get("total")),
+        "done": as_int(h.get("done")),
+        "filename_in": h.get("filename_in"),
+        "cancel_requested": str(h.get("cancel_requested") or '').lower() in ("1","true","yes","on"),
+    }
+
+
+def _task_cancel_requested(r: redis.Redis, task_id: str) -> bool:
+    val = r.hget(_task_key(task_id), "cancel_requested")
+    return str(val or '').lower() in ("1", "true", "yes", "on")
+
+
+def _finalize_cancel(r: redis.Redis, task_id: str, total: int, done: int) -> None:
+    now = str(time.time())
+    r.hset(_task_key(task_id), mapping={
+        "status": "cancelled",
+        "finished_at": now,
+        "done": str(done),
+        "total": str(total),
+        "cancel_requested": "1",
+    })
+    snap = _task_snapshot(r, task_id) or {"task_id": task_id}
+    snap.update({"status": "cancelled", "total": total, "done": done, "cancel_requested": True})
+    r.rpush(_task_events_key(task_id), json.dumps(snap, ensure_ascii=False))
+    r.ltrim(_task_events_key(task_id), -200, -1)
+
+
 def _make_subqueries(q: str) -> list[str]:
     from rag_functions import make_subqueries
     return make_subqueries(q)
@@ -140,6 +179,12 @@ def rq_process_document_task(task_id: str):
     buckets = split_docx_to_question_with_ids(filename_in, second_split=True)
     total = len(buckets)
 
+    if _task_cancel_requested(r, task_id):
+        logging.info("Task %s cancellation detected before processing", task_id)
+        _finalize_cancel(r, task_id, total=total, done=int(t.get("done") or 0))
+        _delete_checkpoint(task_id)
+        return
+
     # Load or init checkpoint
     ck = _load_checkpoint(task_id) or {
         "task_id": task_id,
@@ -183,6 +228,11 @@ def rq_process_document_task(task_id: str):
 
     # Continue from last done index
     for idx in range(done, total):
+        if _task_cancel_requested(r, task_id):
+            logging.info("Task %s cancellation requested before iteration %s", task_id, idx)
+            _finalize_cancel(r, task_id, total=total, done=idx)
+            _delete_checkpoint(task_id)
+            return
         b = buckets[idx]
         q_text = b.get("question_text", "")
         para_indices0 = b.get("para_indices0", []) or b.get("para_ids", [])
@@ -232,6 +282,12 @@ def rq_process_document_task(task_id: str):
                     pass
                 time.sleep(delay)
                 delay = min(delay * 2, 60)
+        if _task_cancel_requested(r, task_id):
+            logging.info("Task %s cancellation requested after LLM invoke (idx=%s)", task_id, idx)
+            _finalize_cancel(r, task_id, total=total, done=idx)
+            _delete_checkpoint(task_id)
+            return
+
         raw = resp.content if hasattr(resp, "content") else str(resp)
 
         verdict = "❓"; text_answer = raw; sources = []
@@ -289,7 +345,7 @@ def rq_process_document_task(task_id: str):
     doc.save(filename_out)
 
     # Finalize
-    r.hset(_task_key(task_id), mapping={"status": "done", "finished_at": str(time.time())})
+    r.hset(_task_key(task_id), mapping={"status": "done", "finished_at": str(time.time()), "done": str(total)})
     r.rpush(_task_events_key(task_id), json.dumps({"status": "done", "task_id": task_id}))
     r.ltrim(_task_events_key(task_id), -200, -1)
     _delete_checkpoint(task_id)

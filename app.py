@@ -20,8 +20,10 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 try:
     from rq import Queue as RQQueue
+    from rq.job import Job
 except Exception:
     RQQueue = None
+    Job = None
 try:
     import redis as _redis
 except Exception:
@@ -224,9 +226,18 @@ def _task_events_key(task_id: str) -> str:
     return f"task_events:{task_id}"
 
 def task_create(task_id: str, data: dict):
+    data = {**data}
+    data.setdefault("cancel_requested", False)
     if USE_REDIS and REDIS is not None:
         # Store as hash; convert values to strings where needed
-        m = {k: (str(v) if isinstance(v, (int, float)) else (v or "")) for k, v in data.items() if k != "stream_queue"}
+        def _coerce(v):
+            if isinstance(v, bool):
+                return "1" if v else "0"
+            if isinstance(v, (int, float)):
+                return str(v)
+            return v or ""
+
+        m = {k: _coerce(v) for k, v in data.items() if k != "stream_queue"}
         REDIS.hset(_task_key(task_id), mapping=m)
         REDIS.expire(_task_key(task_id), 7 * 24 * 3600)  # 7 days retention
         # Optional index of tasks
@@ -250,6 +261,11 @@ def task_get(task_id: str) -> Optional[dict]:
                 return int(x)
             except Exception:
                 return 0
+        def as_bool(x):
+            if x is None:
+                return False
+            return str(x).lower() in ("1", "true", "yes", "on")
+
         return {
             "status": h.get("status"),
             "total": as_int(h.get("total")),
@@ -259,12 +275,21 @@ def task_get(task_id: str) -> Optional[dict]:
             "filename_in": h.get("filename_in"),
             "filename_out": h.get("filename_out"),
             "queue_pos": as_int(h.get("queue_pos")) if h.get("queue_pos") else None,
+            "cancel_requested": as_bool(h.get("cancel_requested")),
+            "rq_job_id": h.get("rq_job_id"),
         }
     return TASKS.get(task_id)
 
 def task_merge(task_id: str, patch: dict):
     if USE_REDIS and REDIS is not None:
-        m = {k: (str(v) if isinstance(v, (int, float)) else (v if v is not None else "")) for k, v in patch.items()}
+        def _coerce(v):
+            if isinstance(v, bool):
+                return "1" if v else "0"
+            if isinstance(v, (int, float)):
+                return str(v)
+            return v if v is not None else ""
+
+        m = {k: _coerce(v) for k, v in patch.items()}
         if m:
             REDIS.hset(_task_key(task_id), mapping=m)
     else:
@@ -282,6 +307,32 @@ def task_push_event(task_id: str, msg: dict):
         t = TASKS.get(task_id)
         if t:
             t["stream_queue"].put(msg)
+
+
+def _task_cancel_requested(task_id: str) -> bool:
+    t = task_get(task_id)
+    if not t:
+        return False
+    flag = t.get("cancel_requested")
+    if isinstance(flag, bool):
+        return flag
+    if isinstance(flag, str):
+        return flag.lower() in ("1", "true", "yes", "on")
+    return bool(flag)
+
+
+def _finalize_task_cancel(task_id: str, extra: Optional[dict] = None):
+    now = time.time()
+    payload = {
+        "status": "cancelled",
+        "finished_at": now,
+        "cancel_requested": True,
+    }
+    if extra:
+        payload.update(extra)
+    task_merge(task_id, payload)
+    snap = _task_snapshot(task_id)
+    task_push_event(task_id, {**snap, "status": "cancelled"})
 
 ### TODO: Semaphore for too many documents <==
 
@@ -311,6 +362,9 @@ def _run_task_guarded(task_id: str):
     dprint(f"inside _run_task_guarded()  : TASK_ID: {task_id}")
     _DOC_SEM.acquire()
     try:
+        if _task_cancel_requested(task_id):
+            _finalize_task_cancel(task_id)
+            return
         # mark running
         task_merge(task_id, {"status": "running", "started_at": time.time()})
         task_push_event(task_id, {"status": "running"})
@@ -599,10 +653,16 @@ def api_upload():
             key = f"upload_dedup:{file_hash}"
             existing_tid = REDIS.get(key)
             if existing_tid:
-                # If we already have a task for this exact file, return it
                 t = task_get(existing_tid)
-                if t and t.get('status') not in ('error',):
-                    return jsonify({"task_id": existing_tid, "dedup": True})
+                if t:
+                    status = (t.get('status') or '').lower()
+                    if status in ('done', 'running', 'queued'):
+                        return jsonify({"task_id": existing_tid, "dedup": True})
+                    if status == 'cancelled':
+                        # allow reprocessing by clearing stale mapping
+                        REDIS.delete(key)
+                else:
+                    REDIS.delete(key)
             # else set mapping for short TTL (10 minutes)
             # tid will be set after we create the task below
         except Exception:
@@ -649,7 +709,7 @@ def api_upload():
             # Enqueue worker job by dotted path to avoid import issues
             job = q.enqueue("tasks.rq_process_document_task", task_id, job_timeout=getattr(Config, "RQ_JOB_TIMEOUT", 7200))
             # approximate queue position
-            task_merge(task_id, {"queue_pos": q.count})
+            task_merge(task_id, {"queue_pos": q.count, "rq_job_id": job.id})
         except Exception as e:
             task_merge(task_id, {"status": "error", "finished_at": time.time()})
             return jsonify({"error": "enqueue_failed", "message": str(e)}), 500
@@ -701,6 +761,72 @@ def api_queue_info():
         "queued": _PENDING_Q.qsize(),
         "in_progress": in_progress
     })
+
+
+@app.post("/api/tasks/<task_id>/cancel")
+@limiter.limit("10/minute")
+def api_task_cancel(task_id):
+    """Request cancellation of a queued or running document-processing task."""
+
+    task = task_get(task_id)
+    if not task:
+        return abort(404)
+
+    status = task.get("status")
+    if status in ("done", "error", "cancelled"):
+        return jsonify({
+            "ok": False,
+            "status": status,
+            "message": "task already finished"
+        }), 409
+
+    use_rq = getattr(Config, "USE_RQ_TASKS", False) and REDIS is not None and RQQueue is not None and Job is not None
+
+    if use_rq:
+        rq_job_id = task.get("rq_job_id")
+        job = None
+        if rq_job_id:
+            try:
+                job = Job.fetch(rq_job_id, connection=REDIS)
+            except Exception:
+                job = None
+
+        if status == "queued":
+            # Remove from queue if still pending
+            if job:
+                try:
+                    job.cancel()
+                except Exception:
+                    pass
+            _finalize_task_cancel(task_id, {"total": task.get("total", 0), "done": task.get("done", 0)})
+            return jsonify({"ok": True, "status": "cancelled"})
+
+        # Mark cancel flag for running job; worker will honour it
+        task_merge(task_id, {"cancel_requested": True, "status": "cancel_requested"})
+        snap = _task_snapshot(task_id)
+        task_push_event(task_id, {**snap, "status": "cancel_requested"})
+
+        # Best effort: set a marker on the job as well
+        if job:
+            try:
+                job.meta = job.meta or {}
+                job.meta["cancel_requested"] = True
+                job.save()
+            except Exception:
+                pass
+
+        return jsonify({"ok": True, "status": "cancel_requested"})
+
+    # Local-thread fallback
+    if status == "queued":
+        _finalize_task_cancel(task_id, {"total": task.get("total", 0), "done": task.get("done", 0)})
+        return jsonify({"ok": True, "status": "cancelled"})
+
+    # Running or preparing task: mark cancel flag and notify listeners
+    task_merge(task_id, {"cancel_requested": True, "status": "cancel_requested"})
+    snap = _task_snapshot(task_id)
+    task_push_event(task_id, {**snap, "status": "cancel_requested"})
+    return jsonify({"ok": True, "status": "cancel_requested"})
 
 @app.get("/api/health")
 def api_health():
@@ -1185,6 +1311,7 @@ def _task_snapshot(task_id):
         "done": t["done"],
         "filename_in": os.path.basename(t["filename_in"]),
         "ready": (t["status"] == "done"),
+        "cancel_requested": bool(t.get("cancel_requested")),
     }
 
 
@@ -1197,6 +1324,9 @@ def _process_document_task(task_id: str):
         return
 
     try:
+        if _task_cancel_requested(task_id):
+            _finalize_task_cancel(task_id)
+            return
         task_merge(task_id, {"status": "running"})
         task_push_event(task_id, _task_snapshot(task_id))
 
@@ -1207,6 +1337,10 @@ def _process_document_task(task_id: str):
         total = len(buckets)
         task_merge(task_id, {"total": total})
         task_push_event(task_id, _task_snapshot(task_id))
+
+        if _task_cancel_requested(task_id):
+            _finalize_task_cancel(task_id, {"total": total, "done": task.get("done", 0)})
+            return
 
         # Prepare dense retriever (we'll derive sparse BM25 over dense candidates per‑subquery)
         dense = DB.as_retriever(
@@ -1224,7 +1358,11 @@ def _process_document_task(task_id: str):
         # Prompt skeleton (JSON expected by your system prompt)
         system_prompt = Config.system_prompt_document_loop
 
+        cancelled = False
         for b in buckets:
+            if _task_cancel_requested(task_id):
+                cancelled = True
+                break
             q_text = b["question_text"]
             para_indices0 = b.get("para_indices0", []) or b.get("para_ids", [])
             if not isinstance(para_indices0, list):
@@ -1252,6 +1390,10 @@ def _process_document_task(task_id: str):
             dprint(f"resp: {resp}")
             raw = resp.content if hasattr(resp, "content") else str(resp)
             dprint(f"raw: {raw}")
+
+            if _task_cancel_requested(task_id):
+                cancelled = True
+                break
 
             # parse JSON (your example_json contract)
             verdict = "❓"; text_answer = raw; sources = []
@@ -1312,6 +1454,10 @@ def _process_document_task(task_id: str):
                 "last_verdict": verdict,
                 "last_brief": (text_answer[:140] + "…") if len(text_answer) > 140 else text_answer
             })
+
+        if cancelled:
+            _finalize_task_cancel(task_id, {"done": done, "total": total})
+            return
 
         # Save annotated DOCX
         out_path = task["filename_out"]

@@ -62,12 +62,15 @@
     </div>
 
     <div id="progress" class="hidden">
-      <div class="flex items-center justify-between">
+      <div class="flex items-center justify-between gap-4">
         <div>
           <div id="file-name" class="text-sm text-slate-500"></div>
           <div class="text-sm" id="status-line"></div>
         </div>
-        <a id="download-link" class="hidden bg-emerald-600 text-white px-3 py-2 rounded hover:bg-emerald-700" href="#">Завантажити DOCX</a>
+        <div class="flex items-center gap-2">
+          <button id="cancel-task" type="button" class="hidden bg-rose-600 text-white px-3 py-2 rounded hover:bg-rose-700">Скасувати обробку</button>
+          <a id="download-link" class="hidden bg-emerald-600 text-white px-3 py-2 rounded hover:bg-emerald-700" href="#">Завантажити DOCX</a>
+        </div>
       </div>
       <div class="mt-3 w-full bg-slate-200 rounded h-3">
         <div id="bar" class="bg-sky-600 h-3 rounded" style="width:0%"></div>
@@ -319,6 +322,10 @@ const dl = document.getElementById('download-link');
 const lastBrief = document.getElementById('last-brief');
 const uploadingBanner = document.getElementById('uploading-banner');
 const uploadingText = document.getElementById('uploading-text');
+const cancelBtn = document.getElementById('cancel-task');
+if (cancelBtn) {
+  cancelBtn.style.display = 'none';
+}
 
   // ---- Persist in-flight task across reloads ----
   const LS_KEY_TASK = 'crag_last_task';
@@ -348,61 +355,149 @@ const uploadingText = document.getElementById('uploading-text');
   }
 
 function attachProgressSSE(taskId, fileNameFallback, onOpenCb) {
+  if (activeEventSource) {
+    try { activeEventSource.close(); } catch (_) {}
+    activeEventSource = null;
+  }
+  activeTaskId = taskId;
+
   progressBox.classList.remove('hidden');
   fileNameEl.textContent = fileNameFallback ? ('Файл: ' + fileNameFallback) : '';
   dl.classList.add('hidden');
+  dl.removeAttribute('href');
   lastBrief.textContent = '';
   bar.style.width = '0%';
   statusLine.textContent = 'Відновлюю прогрес…';
 
+  if (cancelBtn) {
+    cancelBtn.classList.remove('hidden');
+    cancelBtn.removeAttribute('disabled');
+    cancelBtn.textContent = 'Скасувати обробку';
+    cancelBtn.style.display = 'inline-flex';
+    cancelBtn.style.backgroundColor = '#dc2626';
+    cancelBtn.style.border = '1px solid #b91c1c';
+    cancelBtn.style.color = '#ffffff';
+  }
+
   const ev = new EventSource('/api/progress/' + taskId);
+  activeEventSource = ev;
   let opened = false;
+
+  const finishTask = (message, { showDownload = false, taskData = null, clearBrief = true } = {}) => {
+    try { ev.close(); } catch (_) {}
+    if (activeEventSource === ev) activeEventSource = null;
+    activeTaskId = null;
+    statusLine.textContent = message;
+    if (clearBrief) lastBrief.textContent = '';
+    if (showDownload && taskData && taskData.task_id) {
+      dl.href = '/api/download/' + taskData.task_id;
+      dl.classList.remove('hidden');
+    } else {
+      dl.classList.add('hidden');
+      dl.removeAttribute('href');
+    }
+    if (cancelBtn) {
+      cancelBtn.classList.add('hidden');
+      cancelBtn.removeAttribute('disabled');
+      cancelBtn.textContent = 'Скасувати обробку';
+      cancelBtn.style.display = 'none';
+      cancelBtn.style.backgroundColor = '#dc2626';
+      cancelBtn.style.border = '1px solid #b91c1c';
+      cancelBtn.style.color = '#ffffff';
+    }
+    uploadingBanner?.classList.add('hidden');
+    startBtn?.removeAttribute('disabled');
+    isSubmitting = false;
+    clearLastTask(taskId);
+  };
+
   ev.onopen = () => {
     opened = true;
     if (uploadingText) uploadingText.textContent = 'Підключено. Очікування оновлень…';
     try { if (typeof onOpenCb === 'function') onOpenCb(); } catch (_) {}
   };
   ev.onmessage = (m) => {
-    if (!opened) { opened = true; try { if (typeof onOpenCb === 'function') onOpenCb(); } catch (_) {} }
-    const data = JSON.parse(m.data);
-      if (!data) return;
+    if (!opened) {
+      opened = true;
+      try { if (typeof onOpenCb === 'function') onOpenCb(); } catch (_) {}
+    }
+    let data;
+    try { data = JSON.parse(m.data); } catch (_) { return; }
+    if (!data) return;
 
-      if (data.filename_in) {
-        fileNameEl.textContent = 'Файл: ' + data.filename_in;
-        saveLastTask(taskId, data.filename_in);
+    if (data.filename_in) {
+      fileNameEl.textContent = 'Файл: ' + data.filename_in;
+      saveLastTask(taskId, data.filename_in);
+    }
+
+    const total = data.total || 0;
+    const done = data.done || 0;
+    const pct = total ? Math.min(100, Math.max(0, Math.floor((done / total) * 100))) : 0;
+    bar.style.width = pct + '%';
+
+    if (data.last_brief) {
+      lastBrief.textContent = `Останній результат: ${data.last_brief}`;
+    }
+
+    if (data.status === 'cancel_requested') {
+      statusLine.textContent = 'Запит на скасування прийнято. Завершення поточної операції…';
+      if (cancelBtn) {
+        cancelBtn.textContent = 'Скасовую…';
+        cancelBtn.setAttribute('disabled', 'disabled');
       }
+      return;
+    }
 
-      const total = data.total || 0;
-      const done = data.done || 0;
-      const pct = total ? Math.floor((done / total) * 100) : 0;
-      bar.style.width = pct + '%';
-      statusLine.textContent = total ? `Опрацьовано: ${done} з ${total} (${pct}%)` : 'Підготовка…';
+    if (data.status === 'cancelled') {
+      finishTask('Обробку скасовано користувачем.', { taskData: data });
+      return;
+    }
 
-      if (data.last_brief) {
-        lastBrief.textContent = `Останній результат: ${data.last_brief}`;
-      }
+    if (data.status === 'done') {
+      finishTask('Готово. Можете завантажити результат.', { showDownload: true, taskData: data });
+      return;
+    }
 
-      if (data.status === 'done') {
-        ev.close();
-        dl.href = '/api/download/' + data.task_id;
-        dl.classList.remove('hidden');
-        statusLine.textContent = 'Готово. Можете завантажити результат.';
-        // Clear the last short message once finished
-        lastBrief.textContent = '';
-        clearLastTask(taskId);
-      } else if (data.status === 'error') {
-        ev.close();
-        statusLine.textContent = 'Помилка обробки';
-        lastBrief.textContent = '';
-        clearLastTask(taskId);
-      }
-    };
-    ev.onerror = () => {
-      // EventSource auto-reconnects; show a transient reconnecting state
-      if (uploadingText) uploadingText.textContent = 'Втрачено зв\'язок. Відновлюю…';
-      statusLine.textContent = 'Втрачено зв\'язок. Відновлюю…';
-    };
+    if (data.status === 'error') {
+      finishTask('Помилка обробки', { taskData: data });
+      return;
+    }
+
+    statusLine.textContent = total ? `Опрацьовано: ${done} з ${total} (${pct}%)` : 'Підготовка…';
+  };
+  ev.onerror = () => {
+    if (uploadingText) uploadingText.textContent = 'Втрачено зв\'язок. Відновлюю…';
+    statusLine.textContent = 'Втрачено зв\'язок. Відновлюю…';
+  };
+}
+
+cancelBtn?.addEventListener('click', async () => {
+  if (!activeTaskId) {
+    cancelBtn.classList.add('hidden');
+    return;
   }
+  cancelBtn.setAttribute('disabled', 'disabled');
+  cancelBtn.textContent = 'Скасовую…';
+  statusLine.textContent = 'Надсилаю запит на скасування…';
+  try {
+    const res = await fetch(`/api/tasks/${activeTaskId}/cancel`, { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const reason = body?.message || body?.error || res.statusText || 'Невідома помилка';
+      throw new Error(reason);
+    }
+    statusLine.textContent = 'Запит на скасування прийнято. Очікування завершення…';
+  } catch (err) {
+    console.error('Failed to cancel task', err);
+    cancelBtn.removeAttribute('disabled');
+    cancelBtn.textContent = 'Скасувати обробку';
+    cancelBtn.style.display = 'inline-flex';
+    cancelBtn.style.backgroundColor = '#dc2626';
+    cancelBtn.style.border = '1px solid #b91c1c';
+    cancelBtn.style.color = '#ffffff';
+    statusLine.textContent = `Не вдалося скасувати обробку: ${err?.message || 'невідома помилка'}`;
+  }
+});
 
   // Reattach on reload if a task is in-flight
   window.addEventListener('load', () => {
@@ -466,6 +561,8 @@ function attachProgressSSE(taskId, fileNameFallback, onOpenCb) {
     // Do NOT auto-start; require explicit click on the Start button
   });
 
+let activeTaskId = null;
+let activeEventSource = null;
 let isSubmitting = false;
 uploadForm.addEventListener('submit', async (e) => {
   e.preventDefault();
