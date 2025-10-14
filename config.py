@@ -52,7 +52,7 @@ class Config:
     MAX_TOKENS_PER_REQUEST = 22000
 
     # Flask / upload hard limits
-    MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", str(20 * 1024 * 1024)))  # 20 MB
+    MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", str(50 * 1024 * 1024)))  # 20 MB
     ALLOWED_EXTENSIONS = {".docx"}
 
     # Results API pagination caps
