@@ -14,9 +14,6 @@ import tiktoken
 import pypandoc
 from pprint import pprint
 
-from docx import Document
-from docx.oxml import CT_P, CT_Tbl
-
 from colorama import Fore
 from langchain.schema import Document as LangchainDocument
 
@@ -31,12 +28,14 @@ CHUNK2 = 11
 CHUNK_SIZE = Config.CHUNK_SIZE
 CHUNK_OVERLAP = Config.CHUNK_OVERLAP
 
-# encoding_model = "cl100k_base"
-# encoding_model = "o200k_base"
-
+# Primary tokenizer/encoding used for chunk budgeting
 ENCODING_MODEL = "o200k_base"
 
-HEADERS_MUCH_BUFFER = []
+# Adjusted chunking controls (token-level)
+TARGET_CHUNK_TOKENS = max(256, CHUNK_SIZE)
+MIN_CHUNK_TOKENS = max(120, TARGET_CHUNK_TOKENS // 3)
+HARD_CHUNK_TOKENS = max(TARGET_CHUNK_TOKENS + 128, int(TARGET_CHUNK_TOKENS * 1.35))
+OVERLAP_TOKENS = max(0, min(CHUNK_OVERLAP, TARGET_CHUNK_TOKENS // 2))
 
 # Debug gating via Config.DEBUG
 DEBUG = getattr(Config, "DEBUG", False)
@@ -44,6 +43,26 @@ DEBUG = getattr(Config, "DEBUG", False)
 def dprint(msg: str):
     if DEBUG:
         print(msg)
+
+
+_TOKEN_ENCODER = tiktoken.get_encoding(ENCODING_MODEL)
+_CL100K_ENCODER = tiktoken.get_encoding("cl100k_base")
+
+
+def _count_tokens(text: str) -> int:
+    return len(_TOKEN_ENCODER.encode(text, disallowed_special=()))
+
+
+def _tail_tokens(text: str, budget: int) -> str:
+    if budget <= 0:
+        return ""
+    tokens = _TOKEN_ENCODER.encode(text, disallowed_special=())
+    if not tokens:
+        return ""
+    if len(tokens) <= budget:
+        return text
+    tail = tokens[-budget:]
+    return _TOKEN_ENCODER.decode(tail)
 
 
 def _sha1(text: str) -> str:
@@ -64,6 +83,93 @@ def _sha256_file(path: str) -> Optional[str]:
 
 _heading_re = re.compile(r'^\s{0,3}(#{1,6})\s+(.*)$', re.MULTILINE)
 
+
+_TABLE_LINE_RE = re.compile(r"^\s*\|.*\|\s*$")
+_LIST_LINE_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+
+
+def _classify_markdown_line(line: str, in_code_block: bool) -> str:
+    stripped = line.strip()
+    if in_code_block:
+        return "code"
+    if not stripped:
+        return "blank"
+    if stripped.startswith("```"):
+        return "fence"
+    if stripped.startswith("#"):
+        return "heading"
+    if _TABLE_LINE_RE.match(stripped):
+        return "table"
+    if _LIST_LINE_RE.match(stripped):
+        return "list"
+    if stripped.startswith(">"):
+        return "quote"
+    return "paragraph"
+
+
+def _split_markdown_into_blocks(text: str) -> List[str]:
+    """Coalesce markdown lines into coherent blocks (tables, lists, paragraphs)."""
+    lines = text.splitlines()
+    blocks: List[str] = []
+    current: List[str] = []
+    current_type: Optional[str] = None
+    in_code = False
+
+    def flush() -> None:
+        nonlocal current, current_type
+        if current:
+            block = "\n".join(current).strip("\n")
+            if block:
+                blocks.append(block)
+        current = []
+        current_type = None
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            line_type = _classify_markdown_line(line, in_code)
+            if in_code:
+                current.append(line)
+                flush()
+                in_code = False
+            else:
+                flush()
+                current.append(line)
+                current_type = "code"
+                in_code = True
+            continue
+
+        line_type = _classify_markdown_line(line, in_code)
+        if line_type == "blank" and not in_code:
+            flush()
+            continue
+        if current_type is None:
+            current_type = line_type
+            current.append(line)
+            continue
+        if line_type != current_type and not in_code:
+            flush()
+            if line_type == "blank":
+                continue
+            current_type = line_type
+            current.append(line)
+        else:
+            current.append(line)
+    flush()
+    return blocks
+
+
+def _fallback_split(text: str) -> List[str]:
+    """Fallback to the recursive chunker for very large blocks."""
+    chunker = RecursiveTokenChunker(
+        chunk_size=min(HARD_CHUNK_TOKENS, TARGET_CHUNK_TOKENS * 2),
+        chunk_overlap=min(OVERLAP_TOKENS, 64),
+        length_function=openai_token_count,
+        separators=["\n\n", "\n", " ", ""],
+    )
+    parts = [p.strip() for p in chunker.split_text(text) if p.strip()]
+    return parts or [text]
+
 def _stable_find_positions(big: str, pieces: List[str]) -> List[tuple]:
     dprint(f"{'='*33} def _stable_find_positions(...) {'='*33}")
 
@@ -74,8 +180,9 @@ def _stable_find_positions(big: str, pieces: List[str]) -> List[tuple]:
     """
     positions = []
     cursor = 0
+    backtrack = 2000
     for chunk in pieces:
-        idx = big.find(chunk, cursor)
+        idx = big.find(chunk, max(cursor - backtrack, 0))
         if idx == -1:
             idx = big.find(chunk)
         if idx == -1:
@@ -109,6 +216,78 @@ def _extract_heading_path_for_chunks(chunks: List[str]) -> List[Dict]:
         effective_path = [p for p in path if p]
         out.append({"headings_in_chunk": found, "heading_path": effective_path})
     return out
+
+
+def _merge_small_chunks(chunks: List[str]) -> List[str]:
+    if not chunks:
+        return chunks
+    merged: List[str] = []
+    for chunk in chunks:
+        tokens = _count_tokens(chunk)
+        if merged and tokens < MIN_CHUNK_TOKENS:
+            candidate = merged[-1] + "\n\n" + chunk
+            if _count_tokens(candidate) <= HARD_CHUNK_TOKENS:
+                merged[-1] = candidate
+                continue
+        merged.append(chunk)
+    return merged
+
+
+def _build_chunks(blocks: List[str]) -> List[str]:
+    results: List[str] = []
+    current: List[str] = []
+    current_tokens = 0
+
+    def finalize(carry_overlap: bool) -> None:
+        nonlocal current, current_tokens
+        if not current:
+            return
+        chunk_text = "\n\n".join(current).strip()
+        if not chunk_text:
+            current = []
+            current_tokens = 0
+            return
+        results.append(chunk_text)
+        if carry_overlap and OVERLAP_TOKENS > 0:
+            overlap_text = _tail_tokens(chunk_text, OVERLAP_TOKENS)
+            if overlap_text:
+                current = [overlap_text]
+                current_tokens = _count_tokens(overlap_text)
+                return
+        current = []
+        current_tokens = 0
+
+    idx = 0
+    while idx < len(blocks):
+        block = blocks[idx]
+        if not block.strip():
+            idx += 1
+            continue
+        block_tokens = _count_tokens(block)
+        if block_tokens > HARD_CHUNK_TOKENS:
+            sub_parts = _fallback_split(block)
+            blocks[idx:idx+1] = sub_parts
+            continue
+
+        if current_tokens and current_tokens + block_tokens > HARD_CHUNK_TOKENS and current_tokens >= MIN_CHUNK_TOKENS:
+            finalize(carry_overlap=True)
+            continue
+
+        if current_tokens == 0 and block_tokens >= HARD_CHUNK_TOKENS:
+            results.append(block)
+            idx += 1
+            continue
+
+        current.append(block)
+        current_tokens += block_tokens
+
+        if current_tokens >= TARGET_CHUNK_TOKENS:
+            finalize(carry_overlap=True)
+        idx += 1
+
+    finalize(carry_overlap=False)
+
+    return _merge_small_chunks(results)
 
 # --- Attachment/parent linkage helper ---
 def _infer_attachment_metadata_from_md_path(file_path: str) -> Dict:
@@ -270,102 +449,6 @@ def analyze_chunks(chunks, use_tokens=False):
         print("\nNo character overlap found")
 
 
-
-# def extract_paragraphs_with_offsets(docx_path):
-#     print(f"{'='*33}  {'='*33}")
-
-#     doc = Document(docx_path)
-#     paragraphs = []
-#     current_heading = None
-#     offset = 0
-#     para_index = 0
-#     table_index = 0
-
-#     for element in doc.element.body:
-#         if isinstance(element, CT_P):
-#             par = element.xpath('.//w:t')
-#             paragraph_text = ''.join([node.text for node in par if node.text])
-#             if paragraph_text:
-#                 text = paragraph_text.strip()
-#                 start = offset
-#                 offset += len(text) + 1  # +1 for newline
-#                 if len(text) < 80:
-#                     current_heading = text
-#                 metadata = {
-#                     "type": "paragraph",
-#                     "heading": current_heading,
-#                     "index": para_index,
-#                     "id": str(uuid.uuid4())
-#                 }
-#                 paragraphs.append({
-#                     "text": text,
-#                     "start": start,
-#                     "end": offset,
-#                     "metadata": metadata
-#                 })
-#                 para_index += 1
-
-#         elif isinstance(element, CT_Tbl):
-#             for row in element.xpath('.//w:tr'):
-#                 row_data = []
-#                 for cell in row.xpath('.//w:tc'):
-#                     cell_texts = cell.xpath('.//w:t')
-#                     cell_text = ''.join([node.text for node in cell_texts if node.text])
-#                     row_data.append(cell_text.strip())
-#                 text = ' | '.join(row_data)
-#                 if text:
-#                     start = offset
-#                     offset += len(text) + 1
-#                     metadata = {
-#                         "type": "table",
-#                         "heading": current_heading,
-#                         "table_index": table_index,
-#                         "id": str(uuid.uuid4())
-#                     }
-#                     paragraphs.append({
-#                         "text": text,
-#                         "start": start,
-#                         "end": offset,
-#                         "metadata": metadata
-#                     })
-#             table_index += 1
-
-#     return paragraphs
-
-def read_docx_in_order(docx_path):
-    dprint(f"{'='*33} def read_docx_in_order(docx_path) {'='*33}")
-    # Load the document
-    doc = Document(docx_path)
-
-    # Iterate through each element in the document body
-    full_text = []
-    
-    for element in doc.element.body:
-        if isinstance(element, CT_P):
-            # Extract paragraph text
-            par = element.xpath('.//w:t')
-            paragraph_text = ''.join([node.text for node in par if node.text])
-            if paragraph_text:
-                full_text.append(paragraph_text.strip())
-
-        elif isinstance(element, CT_Tbl):
-            # Extract table data
-            table = element
-            for row in table.xpath('.//w:tr'):
-                row_data = []
-                for cell in row.xpath('.//w:tc'):
-                    cell_texts = cell.xpath('.//w:t')
-                    cell_text = ''.join([node.text for node in cell_texts if node.text])
-                    row_data.append(cell_text.strip())
-                full_text.append(' | '.join(row_data))
-
-    # Join all collected text into a single string
-    complete_text = '\n'.join(full_text)
-    
-    return complete_text
-
-
-
 def extract_embedded_files(docx_path, output_dir):
     dprint(f"{'='*33} def extract_embedded_files(docx_path, output_dir) {'='*33}")
 
@@ -385,42 +468,6 @@ def extract_embedded_files(docx_path, output_dir):
                 dprint(f"Extracted: {file}")
 
     return extracted_files
-
-# def read_full_document(file_path):
-#     print(f"{'='*33}  {'='*33}")
-
-#     print("inside read_full_document()")
-
-#     output_dir = 'extracted_files/'
-#     embeddings_dir = 'word/embeddings/'
-#     full_embed_path = f"{output_dir}/{embeddings_dir}"
-#     # extracted_files = extract_embedded_files(file_path, "extracted_files")
-#     extracted_files = extract_embedded_files(file_path, output_dir)
-#     # document_text = convert_docx_to_markdown(file_path)
-#     document_text = read_docx_in_order(file_path)
-#     if extracted_files:
-#         for i, extracted_file_path in enumerate(extracted_files, start=1):
-#             print('read_full_document() - for i, extracted_file_path in enumerate(extracted_files): ')
-#             print('\n\n')
-#             print(f"extracted_file_path : {extracted_file_path}")
-#             print('\n\n')
-#             if extracted_file_path.endswith(".docx"):
-#                 embedded_path = os.path.join(output_dir, extracted_file_path)
-#                 appended = read_docx_in_order(embedded_path)
-#                 document_text = f"{document_text} \n# Додаток №{i}: \n {appended}"
-#             # if extracted_file_path.endswith(".docx"):
-#             #     document_text = f"{document_text} \n# Додаток №{i}: \n {read_docx_in_order(f"{output_dir}{extracted_file_path}")}"
-#                 # document_text = f"{document_text} \n# Додаток №{i}: \n {convert_docx_to_markdown(f"{output_dir}{extracted_file_path}")}"
-
-#         # for filename in os.listdir(f"{output_dir}/{embeddings_dir}"):
-#         for filename in os.listdir(full_embed_path):
-#             file_path = os.path.join(full_embed_path, filename)
-#             if os.path.isfile(file_path):
-#                 os.remove(file_path)
-#                 print(filename, "is removed")
-    
-#     return document_text
-
 
 def read_full_document_md(file_path):
     dprint(f"{'='*33} def read_full_document_md(file_path) {'='*33}")
@@ -456,19 +503,11 @@ def read_full_document_md(file_path):
 
 def recursive_tokens_chunking(document):
     dprint(f"{'='*33} def recursive_tokens_chunking(document) {'='*33}")
-
-    recursive_token_chunker = RecursiveTokenChunker(
-        chunk_size=CHUNK_SIZE,              # token length
-        chunk_overlap=CHUNK_OVERLAP,        # token overlap
-        length_function=openai_token_count,
-        separators=["\n###### ", "\n##### ", "\n#### ", "\n### ", "\n## ", "\n# ", "\n\n", ".", "\n", " ", ""]
-    )
-
-    recursive_token_chunks = recursive_token_chunker.split_text(document)
-
+    blocks = _split_markdown_into_blocks(document)
+    chunks = _build_chunks(blocks)
     if DEBUG:
-        analyze_chunks(recursive_token_chunks, use_tokens=True)
-    return recursive_token_chunks
+        analyze_chunks(chunks, use_tokens=True)
+    return chunks
 
 
 def enrich_chunks_with_metadata(
@@ -482,8 +521,6 @@ def enrich_chunks_with_metadata(
 ):
     dprint("enrich_chunks_with_metadata()")
 
-    enc_o200k = tiktoken.get_encoding("o200k_base")
-    enc_35 = tiktoken.get_encoding("cl100k_base")
     positions = _stable_find_positions(document_text, chunks)
 
     # try to get file stats (best-effort)
@@ -501,8 +538,8 @@ def enrich_chunks_with_metadata(
     enriched = []
     for i, chunk in enumerate(chunks):
         start, end = positions[i]
-        token_count_o200k = len(enc_o200k.encode(chunk))
-        token_count_35 = len(enc_35.encode(chunk))
+        token_count_o200k = _count_tokens(chunk)
+        token_count_35 = len(_CL100K_ENCODER.encode(chunk, disallowed_special=()))
         word_count = len(chunk.split())
         headings_in_chunk = headings_lists[i] if headings_lists else []
         heading_path = heading_paths[i] if heading_paths else []
@@ -525,6 +562,7 @@ def enrich_chunks_with_metadata(
             "token_count_o200k": token_count_o200k,
             "token_count_cl100k": token_count_35,
             "word_count": word_count,
+            "chunk_token_count": token_count_o200k,
 
             "headings": headings_in_chunk,
             "heading_path": heading_path,
@@ -557,81 +595,6 @@ def convert_docx_to_markdown(docx_path: str) -> str:
     print(f"{'='*33} def convert_docx_to_markdown(docx_path: str) -> str: {'='*33}")
 
     return pypandoc.convert_file(docx_path, 'markdown', format='docx')
-
-# Wrap main logic in function
-
-# def parse_docx_to_chunks_md(file_path: str) -> List[Dict]:
-#     print(f"{'='*33}  {'='*33}")
-
-#     # paragraphs = extract_paragraphs_with_offsets(file_path)
-#     # document_text = read_docx_in_order(file_path)
-#     document_text = convert_docx_to_markdown(file_path)
-#     chunks = recursive_tokens_chunking(document_text)
-#     enriched_chunks = enrich_chunks_with_metadata(
-#         chunks,
-#         document_text,
-#         # paragraphs,
-#         ENCODING_MODEL,
-#         os.path.basename(file_path)
-#     )
-#     return enriched_chunks
-
-
-
-
-# def extract_section_heading(chunk: str) -> str:
-# def extract_section_heading(chunk: str, headers_much_buffer):
-#     print(f"{'='*33}  {'='*33}")
-
-#     """
-#     Extracts the most likely section heading from a chunk of text.
-#     Looks for the last Markdown-style or numbered section title.
-#     """
-#     lines = chunk.strip().split('\n')
-#     headings = []
-#     md_headings = []
-#     # Patterns
-#     md_heading_pattern = re.compile(r'^\s{0,3}#{1,6}\s+(.*)')
-#     numbered_heading_pattern = re.compile(r'^\s{0,3}(\d+(\.\d+)*)([.)]|\s+)(.+)')
-
-#     for line in lines:
-#         line = line.strip()
-#         md_match = md_heading_pattern.match(line)
-#         num_match = numbered_heading_pattern.match(line)
-
-#         if md_match:
-#             print(f"md_match : {md_match.group(1).strip()}")
-#             headings.append(md_match.group(1).strip())
-#             md_headings.append(md_match.group(1).strip())
-
-#         elif num_match:
-#             heading_text = f"{num_match.group(1)} {num_match.group(4).strip()}"
-#             headings.append(heading_text)
-
-#     # Return the last heading found (most relevant for chunk)
-
-#     if md_headings:
-#         headers_much_buffer = md_headings
-#     else:
-#         print(Fore.RED + "+++ INSERTING HEADERS FROM PREVIOUS CHUNK +++\n\n" + Fore.RESET)
-#         for head in headers_much_buffer:
-#             headings.insert(0, head)
-
-#     print(f"headings : {headings}")
-
-#     return headings, headers_much_buffer
-
-
-# def extract_headings(chunks):
-#     print(f"{'='*33}  {'='*33}")
-
-#     """
-#     Returns (headings_lists, unchanged_chunks).
-#     headings_lists[i] contains md headings found in chunks[i].
-#     """
-#     info = _extract_heading_path_for_chunks(chunks)
-#     headings_lists = [d["headings_in_chunk"] for d in info]
-#     return headings_lists, chunks
 
 
 def get_chunks_with_meta_md_only(file_path):
@@ -695,55 +658,8 @@ if __name__ == "__main__":
     for i, chunk in enumerate(enriched_chunks):
         total_tokens += chunk['metadata']['token_count']
         print(Fore.BLUE + f"-----------------------------------------------------------------------------------------------enriched_chunk {i}---chunk_size: {chunk['metadata']['token_count']}" + Fore.RESET)
-        # print(chunk)
 
-        pprint(chunk)
-        # for key, value in chunk.items():
-        #     print(f"{key}: {value}")
-        #     print("----------------")
-        # for item in chunk:
-        #     print(item, ":", enriched_chunks)
-        # # print('++++++++++++++++++++++++++')
-        # # count_tokens2(chunk)
-        # # print('++++++++++++++++++++++++++')
-        # for x in cars:
-        #     print (x)
-        #     for y in cars[x]:
-        #         print (y,':',cars[x][y])
+        print(chunk)
         print(Fore.BLUE + f"-----------------------------------------------------------------------------------------------end of enriched_chunk {i} ---chunk_size: {chunk['metadata']['token_count']}" + Fore.RESET)
 
     print(Fore.YELLOW + f"TOTAL TOKENS : {total_tokens}" + Fore.RESET)
-    # with open(f"{file_path[10:-4]}.txt", "w") as f:
-    #     f.write(" ".join(enriched_chunks))
-    #     print(f'file was writen as : {file_path[10:-4]}')
-    # print(f"PARAGRAPHS: {paragraphs}")
-    # for i, paragraph in enumerate(paragraphs):
-    #     print(f"------Paragraph {i}-------")
-    #     print(paragraph)
-    #     print('--------------------------')
-
-
-    # print(f"document_text: {document_text}")
-    # print(f"chunks: {chunks}")
-    # for i, chunk in enumerate(chunks):
-    #     print(f"-----------------------------------------------------------------------------------------------Chunk {i} ---")
-    #     print(chunk)
-    #     print('++++++++++++++++++++++++++')
-    #     count_tokens2(chunk)
-    #     print('++++++++++++++++++++++++++')
-    #     meta_for_chunk, HEADERS_MUCH_BUFFER = extract_section_heading(chunk, HEADERS_MUCH_BUFFER)
-    #     print(f"{Fore.BLUE}\nmeta_for_chunk : {meta_for_chunk}{Fore.RESET}")
-    #     print(f"{Fore.GREEN}HEADERS_MUCH_BUFFER : {HEADERS_MUCH_BUFFER}{Fore.RESET}")
-    #     # print(extract_section_heading(chunk, HEADERS_MUCH_BUFFER))
-    #     print(f"------------------------------------------------------------------------------------------------end of chunk {i} -----------")
-
-    # analyze_chunks(chunks)
-
-    # print(f"enriched_chunks: {enriched_chunks}")
-    # for i, chunk in enumerate(enriched_chunks):
-    #     print(f"-----------------------------------------------------------------------------------------------enriched_chunk {i}---")
-    #     print(chunk)
-    #     # print('++++++++++++++++++++++++++')
-    #     # count_tokens2(chunk)
-    #     # print('++++++++++++++++++++++++++')
-    #     print(f"------------------------------------------------------------------------------------------------end of enriched_chunk {i} -----------")

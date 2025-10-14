@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-
+load_dotenv()
 
 example_json = """{{
     "text": "<текстова відповідь у форматі Markdown>",
@@ -41,7 +41,8 @@ class Config:
     EMBEDDING_MODEL = "text-embedding-3-large"
 
     DB_DIR = "vectorstore"
-    # NAME_FOR_DB = "VND_documents_100925_v4"
+    # NAME_FOR_DB = "test_new_chunks_v1"
+    # NAME_FOR_DB = "VND_documents_100925_v4" ### its full vectorstore on my mac
     NAME_FOR_DB = "VND_documents_230925_v1"
     DB_NAME = f"{DB_DIR}/{NAME_FOR_DB}"
 

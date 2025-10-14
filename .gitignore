@@ -19,6 +19,10 @@ NBU/
 documents/documents_converted_to_md/
 filename.txt
 
+test.py
+agent/
+documents_copy/
+
 # Local dev environments
 venv/
 .venv/
@@ -32,3 +36,6 @@ test_chunking*.json
 .DS_Store
 node_modules/
 logs/
+
+# Test files
+test.py
